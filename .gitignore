@@ -1,0 +1,6 @@
+users.json
+production.db
+apartments.db
+__pycache__/
+venv/
+.env

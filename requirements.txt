@@ -1,0 +1,6 @@
+playwright
+pyTelegramBotAPI
+schedule
+requests
+playwright-stealth
+python-dotenv
