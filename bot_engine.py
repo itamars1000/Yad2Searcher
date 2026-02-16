@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -23,8 +23,8 @@ if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN found in environment variables")
 USERS_FILE = "users.json"
 DB_FILE = "production.db"
-MIN_SLEEP = 10 * 60  # 10 minutes
-MAX_SLEEP = 14 * 60  # 14 minutes
+MIN_SLEEP = 28 * 60  # 10 minutes
+MAX_SLEEP = 32 * 60  # 14 minutes
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -43,6 +43,47 @@ CITIES = {
 }
 
 # --- Helper Functions ---
+def parse_hebrew_date(date_text):
+    """Parses Hebrew/Relative dates from Yad2."""
+    if not date_text:
+        return None
+    
+    try:
+        today = datetime.now().date()
+        clean_text = date_text.strip()
+        
+        # 1. Relative Dates
+        if any(x in clean_text for x in ["עודכן היום", "הוקפץ היום", "היום"]):
+            return today
+        if "אתמול" in clean_text:
+            return today - timedelta(days=1)
+        
+        # 2. Standard Date Formats (DD/MM/YYYY or DD/MM/YY)
+        # Regex to find date pattern (supports / or .)
+        # User specified format: dd/mm/yy -> 2 digits year
+        match = re.search(r"(\d{1,2})[\/\.](\d{1,2})(?:[\/\.](\d{2,4}))?", clean_text)
+        if match:
+            day = int(match.group(1))
+            month = int(match.group(2))
+            year_group = match.group(3)
+
+            if year_group:
+                year = int(year_group)
+                # Handle 2-digit year (e.g., 26 -> 2026)
+                if year < 100:
+                    year += 2000
+            else:
+                # No year? Assume current year
+                year = today.year
+            
+            return datetime(year, month, day).date()
+            
+    except Exception as e:
+        print(f"Error parsing date '{date_text}': {e}")
+        return None
+        
+    return None
+
 def construct_url(config):
     """Constructs the Yad2 URL based on configuration dictionary."""
     base_url = "https://www.yad2.co.il/realestate/rent"
@@ -357,64 +398,120 @@ def scrape_cycle():
                 print(f"Found {len(items)} items.")
                 
                 new_ads_count = 0
-                # Process top 5 items
-                for i, item in enumerate(items[:5]):
+                # Process top 10 items (Limit Scope)
+                for i, item in enumerate(items[:10]):
+                    print(f"--- Processing Item {i+1} ---") # Trace Log
                     try:
                         # Extract Link
                         link_el = item.locator("a").first
+                        if link_el.count() == 0:
+                            print(f"Item {i}: No link element found. Skipping.")
+                            continue
+                            
                         href = link_el.get_attribute("href")
-                        if not href: continue
+                        if not href: 
+                            print(f"Item {i}: No href attribute. Skipping.")
+                            continue
                         
                         full_link = f"https://www.yad2.co.il{href}" if href.startswith("/") else href
                         ad_id = extract_ad_id(full_link)
                          
-                        if not ad_id: continue
+                        if not ad_id: 
+                            print(f"Item {i}: Could not extract Ad ID from {full_link}. Skipping.")
+                            continue
                         
-                        # Date Filtering
-                        # User requested: Send only if text contains 'Today'/'Updated Today' or matches current date.
-                        # Else -> 'Old ad ignored' and Continue.
-                        try:
-                            item_text = item.inner_text()
-                            today_str = datetime.now().strftime("%d/%m/%Y")
-                            
-                            is_fresh = False
-                            
-                            # Check 1: Explicit Date (DD/MM/YYYY)
-                            date_match = re.search(r'\d{2}/\d{2}/\d{4}', item_text)
-                            if date_match:
-                                date_found = date_match.group(0)
-                                if date_found == today_str:
-                                    is_fresh = True
-                                    print(f"Ad {ad_id}: Date match ({date_found}).")
-                                else:
-                                    print(f"Ad {ad_id}: Old date ({date_found}). Ignored.")
-                            
-                            # Check 2: Relative Text ("Updated Today", "Today")
-                            elif "עודכן היום" in item_text or "היום" in item_text:
-                                is_fresh = True
-                                print(f"Ad {ad_id}: Found 'Today' text.")
-                                
-                            # Fallback: User requested STRICT date matching.
-                            else:
-                                is_fresh = False
-                                print(f"Ad {ad_id}: No date found. Ignored (Strict Mode).")
+                        
+                        print(f"Item {i}: Ad ID {ad_id} found.") # Trace Log
+                        
+                        # Deduplication (Check EARLY)
+                        if is_ad_notified(ad_id, user_id):
+                            print(f"Ad {ad_id}: Already notified. Skipping.")
+                            continue
 
-                            if not is_fresh:
-                                continue
+                        # Extract Price early for logging
+                        price = item.locator("[data-testid='price']").inner_text().strip() if item.locator("[data-testid='price']").count() else "N/A"
+
+                        # --- Date Filtering (Strict Class Match) ---
+                        try:
+                            # 1. Target specific element: span[class*="report-ad_createdAt"]
+                            # The user identified this specific class for the date.
+                            date_el = item.locator('span[class*="report-ad_createdAt"]').first
+                            
+                            parsed_date = None
+                            date_text_log = "N/A"
+
+                            if date_el.count() > 0:
+                                raw_text = date_el.inner_text()
+                                date_text_log = raw_text
                                 
+                                # 2. Regex Extraction (dd/mm/yy)
+                                # Look for 11/02/26 pattern
+                                match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2})", raw_text)
+                                if match:
+                                    day = int(match.group(1))
+                                    month = int(match.group(2))
+                                    year_short = int(match.group(3))
+                                    year_full = 2000 + year_short
+                                    
+                                    parsed_date = datetime(year_full, month, day).date()
+                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Regex).")
+                                else:
+                                    # Fallback: Check for "Today"/"Yesterday" if regex fails
+                                    parsed_date = parse_hebrew_date(raw_text)
+                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
+                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
+                            else:
+                                # Fallback 2: Try extracting date from Image URL
+                                # Image URL format: https://img.yad2.co.il/Pic/202602/02/...
+                                img_el = item.locator("img").first
+                                if img_el.count() > 0:
+                                    src = img_el.get_attribute("src")
+                                    if src:
+                                        img_match = re.search(r"/Pic/(\d{4})(\d{2})/(\d{2})/", src)
+                                        if img_match:
+                                            y = int(img_match.group(1))
+                                            m = int(img_match.group(2))
+                                            d = int(img_match.group(3))
+                                            parsed_date = datetime(y, m, d).date()
+                                            print(f"Item {i}: Parsed date {parsed_date} from Image URL.")
+                                
+                                if not parsed_date:
+                                    print(f"Item {i}: Date selector NOT found & Image URL failed.")
+                                    # Try generic text search just in case
+                                    # parsed_date = parse_hebrew_date(item.inner_text())
+                                    pass
+                            
+                            # Log what we found
+                            # print(f"Ad {ad_id} | Price: {price} | Date: {parsed_date} (Raw: {date_text_log})")
+
+                            if not parsed_date:
+                                # Skip if we can't find a valid date (Strict rule)
+                                print(f"Ad {ad_id}: No valid date found. Skipping.")
+                                continue
+                            
+                            # 3. 7-Day Filter
+                            today = datetime.now().date()
+                            delta = (today - parsed_date).days
+                            
+                            print(f"Ad {ad_id} | Price: {price} | Date: {parsed_date} | Age: {delta} days")
+
+                            if delta > 7:
+                                # Skipping old ads (older than a week)
+                                continue
+                            
+                            # If we are here, ad is FRESH.
+
                         except Exception as e:
                             print(f"Error checking date for {ad_id}: {e}")
-                            # Continue processing if check fails (fail open)
-
-                        # Deduplication
-                        if is_ad_notified(ad_id, user_id):
                             continue
-                            
+
+                        # Deduplication check moved up
                         # New Ad Found! Extract Details
-                        price = item.locator("[data-testid='price']").inner_text().strip() if item.locator("[data-testid='price']").count() else "N/A"
+                        # Price already extracted above
                         address = item.locator("[data-testid='street-name']").inner_text().strip() if item.locator("[data-testid='street-name']").count() else ""
                         city = item.locator("[data-testid='item-info-line-1st']").inner_text().strip() if item.locator("[data-testid='item-info-line-1st']").count() else ""
                         rooms = item.locator("[data-testid='item-info-line-2nd']").inner_text().strip() if item.locator("[data-testid='item-info-line-2nd']").count() else ""
+
                         
                         msg = (
                             f"🏠 *מציאה חדשה!*\n"
@@ -429,6 +526,7 @@ def scrape_cycle():
                         try:
                             bot.send_message(user_id, msg, parse_mode="Markdown")
                             mark_ad_notified(ad_id, user_id)
+                            print(f"Ad {ad_id} saved to database for user {user_id}.")
                             new_ads_count += 1
                             print(f"Sent notification to {user_id}. Stopping scan for this user for this cycle.")
                             break # Limit to 1 ad per cycle per user
