@@ -4,6 +4,7 @@ import time
 import random
 import threading
 import sqlite3
+import logging
 import requests
 import telebot
 from telebot import types
@@ -15,6 +16,18 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# --- Logging Setup ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 # --- Configuration ---
@@ -79,7 +92,7 @@ def parse_hebrew_date(date_text):
             return datetime(year, month, day).date()
             
     except Exception as e:
-        print(f"Error parsing date '{date_text}': {e}")
+        logger.error(f"Error parsing date '{date_text}': {e}")
         return None
         
     return None
@@ -146,11 +159,11 @@ def load_users():
             
             if migrated:
                 save_users(data)
-                print("Migrated users.json to new schema.")
+                logger.info("Migrated users.json to new schema.")
                 
             return data
     except Exception as e:
-        print(f"Error loading users: {e}")
+        logger.error(f"Error loading users: {e}")
         return {}
 
 def save_users(users):
@@ -335,7 +348,7 @@ def process_max_rooms_step(message):
                         reply_markup=get_main_menu())
 
 def run_bot():
-    print("Bot started...")
+    logger.info("Bot started...")
     bot.infinity_polling()
 
 # --- Scraper Logic ---
@@ -349,11 +362,11 @@ def extract_ad_id(link):
         return None
 
 def scrape_cycle():
-    print("\n--- Starting Scraper Cycle ---")
+    logger.info("--- Starting Scraper Cycle ---")
     users = load_users()
     
     if not users:
-        print("No users configured.")
+        logger.info("No users configured.")
         return
 
     with sync_playwright() as p:
@@ -369,10 +382,10 @@ def scrape_cycle():
                 active = user_data.get("active", True)
             
             if not active:
-                print(f"User {user_id} notifications disabled. Skipping.")
+                logger.info(f"User {user_id} notifications disabled. Skipping.")
                 continue
 
-            print(f"Checking for user {user_id}...")
+            logger.info(f"Checking for user {user_id}...")
             
             # Stealth Context
             context = browser.new_context(
@@ -385,7 +398,18 @@ def scrape_cycle():
             stealth.apply_stealth_sync(page)
             
             try:
-                page.goto(search_url) 
+                # Retry logic for page loading
+                for attempt in range(3):
+                    try:
+                        page.goto(search_url, timeout=30000)
+                        break
+                    except Exception as e:
+                        if attempt < 2:
+                            logger.warning(f"Page load attempt {attempt+1} failed for user {user_id}: {e}. Retrying in 10s...")
+                            time.sleep(10)
+                        else:
+                            raise
+                
                 time.sleep(5) # Initial load
                 page.mouse.wheel(0, 1000) # Trigger lazy load
                 time.sleep(3)
@@ -395,37 +419,46 @@ def scrape_cycle():
                 if not items:
                     items = page.locator(".feed-item").all() # Fallback selector
                 
-                print(f"Found {len(items)} items.")
+                logger.info(f"Found {len(items)} items in feed.")
                 
                 new_ads_count = 0
-                # Process top 10 items (Limit Scope)
-                for i, item in enumerate(items[:10]):
-                    print(f"--- Processing Item {i+1} ---") # Trace Log
+                already_notified_count = 0
+                too_old_count = 0
+                no_date_count = 0
+                no_link_count = 0
+                error_count = 0
+                # Process top 15 items (sorted by newest first via order=1)
+                for i, item in enumerate(items[:15]):
+                    logger.debug(f"--- Processing Item {i+1}/{min(len(items), 15)} ---")
                     try:
                         # Extract Link
                         link_el = item.locator("a").first
                         if link_el.count() == 0:
-                            print(f"Item {i}: No link element found. Skipping.")
+                            logger.debug(f"Item {i}: No link element found. Skipping.")
+                            no_link_count += 1
                             continue
                             
                         href = link_el.get_attribute("href")
                         if not href: 
-                            print(f"Item {i}: No href attribute. Skipping.")
+                            logger.debug(f"Item {i}: No href attribute. Skipping.")
+                            no_link_count += 1
                             continue
                         
                         full_link = f"https://www.yad2.co.il{href}" if href.startswith("/") else href
                         ad_id = extract_ad_id(full_link)
                          
                         if not ad_id: 
-                            print(f"Item {i}: Could not extract Ad ID from {full_link}. Skipping.")
+                            logger.debug(f"Item {i}: Could not extract Ad ID from {full_link}. Skipping.")
+                            no_link_count += 1
                             continue
                         
                         
-                        print(f"Item {i}: Ad ID {ad_id} found.") # Trace Log
+                        logger.debug(f"Item {i}: Ad ID {ad_id} found.")
                         
                         # Deduplication (Check EARLY)
                         if is_ad_notified(ad_id, user_id):
-                            print(f"Ad {ad_id}: Already notified. Skipping.")
+                            logger.debug(f"Ad {ad_id}: Already notified. Skipping.")
+                            already_notified_count += 1
                             continue
 
                         # Extract Price early for logging
@@ -454,12 +487,11 @@ def scrape_cycle():
                                     year_full = 2000 + year_short
                                     
                                     parsed_date = datetime(year_full, month, day).date()
-                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Regex).")
+                                    logger.debug(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Regex).")
                                 else:
                                     # Fallback: Check for "Today"/"Yesterday" if regex fails
                                     parsed_date = parse_hebrew_date(raw_text)
-                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
-                                    print(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
+                                    logger.debug(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
                             else:
                                 # Fallback 2: Try extracting date from Image URL
                                 # Image URL format: https://img.yad2.co.il/Pic/202602/02/...
@@ -473,10 +505,10 @@ def scrape_cycle():
                                             m = int(img_match.group(2))
                                             d = int(img_match.group(3))
                                             parsed_date = datetime(y, m, d).date()
-                                            print(f"Item {i}: Parsed date {parsed_date} from Image URL.")
+                                            logger.debug(f"Item {i}: Parsed date {parsed_date} from Image URL.")
                                 
                                 if not parsed_date:
-                                    print(f"Item {i}: Date selector NOT found & Image URL failed.")
+                                    logger.debug(f"Item {i}: Date selector NOT found & Image URL failed.")
                                     # Try generic text search just in case
                                     # parsed_date = parse_hebrew_date(item.inner_text())
                                     pass
@@ -486,23 +518,26 @@ def scrape_cycle():
 
                             if not parsed_date:
                                 # Skip if we can't find a valid date (Strict rule)
-                                print(f"Ad {ad_id}: No valid date found. Skipping.")
+                                logger.debug(f"Ad {ad_id}: No valid date found. Skipping.")
+                                no_date_count += 1
                                 continue
                             
                             # 3. 7-Day Filter
                             today = datetime.now().date()
                             delta = (today - parsed_date).days
                             
-                            print(f"Ad {ad_id} | Price: {price} | Date: {parsed_date} | Age: {delta} days")
+                            logger.debug(f"Ad {ad_id} | Price: {price} | Date: {parsed_date} | Age: {delta} days")
 
-                            if delta > 7:
-                                # Skipping old ads (older than a week)
+                            if delta > 3:
+                                # Skipping old ads (older than 3 days)
+                                too_old_count += 1
                                 continue
                             
                             # If we are here, ad is FRESH.
 
                         except Exception as e:
-                            print(f"Error checking date for {ad_id}: {e}")
+                            logger.error(f"Error checking date for {ad_id}: {e}")
+                            error_count += 1
                             continue
 
                         # Deduplication check moved up
@@ -522,24 +557,32 @@ def scrape_cycle():
                         )
                         
                         # Send Notification
-                        print(f"Sending notification to {user_id} for ad {ad_id}")
+                        logger.info(f"Sending notification to {user_id} for ad {ad_id}")
                         try:
                             bot.send_message(user_id, msg, parse_mode="Markdown")
                             mark_ad_notified(ad_id, user_id)
-                            print(f"Ad {ad_id} saved to database for user {user_id}.")
+                            logger.info(f"Ad {ad_id} sent to user {user_id}.")
                             new_ads_count += 1
-                            print(f"Sent notification to {user_id}. Stopping scan for this user for this cycle.")
-                            break # Limit to 1 ad per cycle per user
                         except Exception as e:
-                            print(f"Failed to send to {user_id}: {e}")
+                            logger.error(f"Failed to send to {user_id}: {e}")
                             
                     except Exception as e:
-                        print(f"Error parsing item {i}: {e}")
+                        logger.error(f"Error parsing item {i}: {e}")
+                        error_count += 1
                 
-                print(f"Sent {new_ads_count} new notifications.")
+                processed = min(len(items), 15)
+                logger.info(f"📊 Scan Summary for user {user_id}: "
+                      f"Found {len(items)} items | "
+                      f"Processed {processed} | "
+                      f"{already_notified_count} already notified | "
+                      f"{too_old_count} too old | "
+                      f"{no_date_count} no date | "
+                      f"{no_link_count} no link | "
+                      f"{error_count} errors | "
+                      f"{new_ads_count} NEW sent")
                 
             except Exception as e:
-                print(f"Error scraping for user {user_id}: {e}")
+                logger.error(f"Error scraping for user {user_id}: {e}")
             finally:
                 context.close()
                 time.sleep(random.randint(5, 10)) # Pause between users
@@ -551,10 +594,10 @@ def run_scraper():
         try:
             scrape_cycle()
         except Exception as e:
-            print(f"Critical Scraper Error: {e}")
+            logger.critical(f"Critical Scraper Error: {e}")
         
         sleep_time = random.randint(MIN_SLEEP, MAX_SLEEP)
-        print(f"Sleeping for {sleep_time} seconds...")
+        logger.info(f"Sleeping for {sleep_time // 60} minutes ({sleep_time}s)...")
         time.sleep(sleep_time)
 
 # --- Main Engine ---
@@ -574,4 +617,4 @@ if __name__ == "__main__":
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("Stopping...")
+        logger.info("Stopping...")

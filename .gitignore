@@ -1,5 +1,9 @@
 users.json
 production.db
+production.db-shm
+production.db-wal
 apartments.db
 __pycache__/
 venv/
+.env
+*.log
