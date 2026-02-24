@@ -1,93 +1,58 @@
 # 🏠 Yad2 Apartment Searcher Bot
 
-A Telegram bot that automatically scans [Yad2](https://www.yad2.co.il) for new rental apartment listings and sends real-time notifications.
+Telegram bot that monitors [Yad2](https://www.yad2.co.il) — Israel's largest real estate platform — and instantly notifies you when new rental apartments matching your criteria are posted.
 
-## ✨ Features
+## 💡 The Problem
 
-- 🔍 **Auto-scanning** — Scrapes Yad2 every ~30 minutes for new listings
-- 📅 **Date filtering** — Only sends ads from the last 3 days
-- 🔔 **Telegram notifications** — Instant alerts with price, location, rooms & link
-- 🛡️ **Stealth mode** — Uses Playwright with stealth to avoid bot detection
-- 🔄 **Deduplication** — Never sends the same ad twice
-- ⚙️ **Custom filters** — Set city, price range & room count via Telegram
+Finding an apartment in Israel is competitive. Good deals disappear within hours. Manually refreshing Yad2 all day isn't practical — so this bot does it for you.
 
-## 📁 Project Structure
+## 🔍 How It Works
+
+The bot runs two parallel processes:
+
+1. **Telegram Bot** — A conversational interface where users set their search preferences (city, price range, rooms)
+2. **Web Scraper** — A headless browser (Playwright) that visits Yad2 every ~30 minutes, extracts listings, and compares them against what's already been sent
 
 ```
-├── bot_engine.py      # Entry point — starts bot & scraper threads
-├── config.py          # Configuration, logging, constants
-├── database.py        # SQLite: user management & notification history
-├── bot.py             # Telegram bot handlers (commands, filters)
-├── scraper.py         # Playwright scraping logic
-├── utils.py           # Date parsing, URL construction, menu helpers
-├── Dockerfile         # Docker deployment
-├── requirements.txt   # Python dependencies
-└── .env               # Telegram token (not in git)
+User sets filters via Telegram
+        ↓
+Scraper fetches Yad2 listings (sorted by newest first)
+        ↓
+Filters by date (last 3 days only)
+        ↓
+Checks against SQLite DB to avoid duplicates
+        ↓
+Sends new matches as Telegram notifications with:
+  📍 Address  💰 Price  🛏️ Rooms  🔗 Link
 ```
 
-## 🚀 Quick Start
+## ⚙️ Key Features
 
-### Prerequisites
-- Python 3.10+
-- A Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+- **Smart date filtering** — Parses Hebrew dates ("היום", "אתמול") and standard formats (dd/mm/yy), with image URL fallback for ads missing date elements
+- **Stealth scraping** — Uses browser fingerprint randomization and stealth plugins to avoid bot detection
+- **Retry logic** — Automatically retries failed page loads (3 attempts with backoff)
+- **Per-user filters** — Each Telegram user configures their own city, price & room preferences
+- **Deduplication** — SQLite database tracks every ad sent to every user — no duplicates ever
 
-### Installation
+## 🏗️ Architecture
 
-```bash
-# Clone the repo
-git clone https://github.com/itamars1000/Yad2Searcher.git
-cd Yad2Searcher
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or: .\venv\Scripts\activate  # Windows
-
-# Install dependencies
-pip install -r requirements.txt
-playwright install chromium
-
-# Set your Telegram token
-echo "TELEGRAM_TOKEN=your_token_here" > .env
-```
-
-### Run
-
-```bash
-python bot_engine.py
-```
-
-### Docker
-
-```bash
-docker build -t yad2bot .
-docker run -d --env-file .env --name yad2bot yad2bot
-```
-
-## 🤖 Bot Commands
-
-| Command | Action |
+| Module | Responsibility |
 |---|---|
-| `/start` | Welcome message & setup wizard |
-| `🚀 התחל חיפוש` | Configure city, price & rooms |
-| `✅ הפעל התראות` | Enable notifications |
-| `🛑 עצור התראות` | Pause (settings saved) |
-| `🔍 מסנן חדש` | Change search filters |
-| `/stop` | Stop notifications |
+| `bot_engine.py` | Entry point — launches bot & scraper threads |
+| `config.py` | Environment variables, logging, constants |
+| `database.py` | SQLite operations — users table & notification history |
+| `bot.py` | Telegram command handlers & filter setup wizard |
+| `scraper.py` | Playwright-based Yad2 scraping & notification logic |
+| `utils.py` | Date parsing, URL construction, UI helpers |
 
 ## 🏙️ Supported Cities
 
 תל אביב · רמת גן · גבעתיים · הרצליה · חיפה · ירושלים · ראשון לציון
 
-## ⚙️ Configuration
+## 🛠️ Tech Stack
 
-| Setting | Default | Location |
-|---|---|---|
-| Scan interval | 28-32 min | `config.py` |
-| Date filter | 3 days | `scraper.py` |
-| Items per scan | 15 (newest) | `scraper.py` |
-| Sort order | By date (newest) | URL `order=1` |
-
-## 📝 License
-
-MIT
+- **Python 3.10+** with multi-threading
+- **Playwright** + `playwright-stealth` for web scraping
+- **pyTelegramBotAPI** for the Telegram interface
+- **SQLite** for persistent storage
+- **Docker** for deployment (runs on GCP Compute Engine)
