@@ -22,15 +22,39 @@ TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TOKEN:
     raise ValueError("No TELEGRAM_TOKEN found in environment variables")
 
+APIFY_TOKEN = os.getenv("APIFY_TOKEN")
+if not APIFY_TOKEN:
+    raise ValueError("No APIFY_TOKEN found in environment variables")
+
+ENABLE_FACEBOOK_SCRAPER = False # Set to True to enable Facebook scraping (consumes Apify API credits)
+
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Your personal Telegram Chat ID (set in .env)
+
 USERS_FILE = "users.json"
 DB_FILE = "production.db"
 MIN_SLEEP = 28 * 60  # 28 minutes
 MAX_SLEEP = 32 * 60  # 32 minutes
 
+# Single broad URL for Smart Batching: all Tel Aviv, newest first, no price/rooms filter
+# Individual per-user price/rooms filters are applied in code after scraping.
+MASTER_SCRAPE_URL = "https://www.yad2.co.il/realestate/rent?city=5000&order=1"
+
 bot = telebot.TeleBot(TOKEN)
 
 # User data storage (in-memory for conversation steps)
 user_data = {}
+
+# --- Facebook Groups Scraping ---
+FACEBOOK_GROUPS = [
+    "https://www.facebook.com/groups/457465901082882?locale=he_IL",
+    "https://www.facebook.com/groups/1749183625345821?locale=he_IL",
+    "https://www.facebook.com/groups/333022240594651?locale=he_IL",
+    "https://www.facebook.com/groups/101875683484689?locale=he_IL",
+    "https://www.facebook.com/groups/305724686290054/?locale=he_IL",
+    "https://www.facebook.com/groups/968184269974550/?locale=he_IL",
+]
+
+APIFY_ACTOR_URL = "https://api.apify.com/v2/acts/apify~facebook-groups-scraper/runs"
 
 # City codes mapping
 CITIES = {

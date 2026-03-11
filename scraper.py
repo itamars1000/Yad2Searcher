@@ -2,15 +2,16 @@ import re
 import time
 import random
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
+from telebot import types
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
-from config import bot, MIN_SLEEP, MAX_SLEEP, logger
+from config import bot, MIN_SLEEP, MAX_SLEEP, MASTER_SCRAPE_URL, logger
 from database import load_users, is_ad_notified, mark_ad_notified
-from utils import parse_hebrew_date
+from utils import parse_hebrew_date, contains_blocked_keywords, satisfies_neighborhood_filter
 
-# --- Scraper Logic ---
+# --- Helpers ---
 def extract_ad_id(link):
     try:
         path = urlparse(link).path
@@ -20,210 +21,301 @@ def extract_ad_id(link):
     except:
         return None
 
+def _parse_user_price_rooms(url):
+    """Extract min/max price and rooms from a user's stored search URL."""
+    try:
+        params = parse_qs(urlparse(url).query)
+        min_price, max_price = 0, 99999999
+        min_rooms, max_rooms = 0.0, 99.0
+
+        if 'price' in params:
+            pr = params['price'][0].split('-')
+            min_price = int(pr[0]) if pr[0].isdigit() else 0
+            max_price = int(pr[1]) if len(pr) > 1 and pr[1].isdigit() else 99999999
+
+        if 'rooms' in params:
+            rm = params['rooms'][0].split('-')
+            try: min_rooms = float(rm[0])
+            except: pass
+            try: max_rooms = float(rm[1]) if len(rm) > 1 else 99.0
+            except: pass
+
+        return min_price, max_price, min_rooms, max_rooms
+    except Exception as e:
+        logger.warning(f"Could not parse user URL filters: {e}")
+        return 0, 99999999, 0.0, 99.0
+
+def _ad_matches_user(ad, user_id, user_data):
+    """
+    Check if a scraped ad should be sent to a specific user.
+    Applies: price range, rooms range, keywords, neighborhoods, dedup.
+    Returns True if the ad should be sent.
+    """
+    # Skip paused users
+    if not user_data.get('active', True):
+        return False
+
+    # Deduplication
+    if is_ad_notified(ad['ad_id'], user_id):
+        return False
+
+    # Price range check
+    min_price, max_price, min_rooms, max_rooms = _parse_user_price_rooms(user_data.get('url', ''))
+    price_num = ad.get('price_numeric', 0)
+    if price_num > 0 and not (min_price <= price_num <= max_price):
+        return False
+
+    # Rooms range check
+    rooms_num = ad.get('rooms_numeric', -1)
+    if rooms_num >= 0 and not (min_rooms <= rooms_num <= max_rooms):
+        return False
+
+    # Keyword blocker
+    keywords_str = user_data.get('keywords', '')
+    if contains_blocked_keywords(ad.get('feed_text', ''), keywords_str):
+        return False
+
+    # Neighborhood whitelist
+    neighborhoods_str = user_data.get('neighborhoods', '')
+    if not satisfies_neighborhood_filter(ad.get('feed_text', ''), neighborhoods_str):
+        return False
+
+    return True
+
+
+def _scrape_all_items(browser):
+    """
+    Opens the MASTER_SCRAPE_URL once and returns a list of ad dicts.
+    All heavy DOM extraction happens here.
+    """
+    context = browser.new_context(
+        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+        viewport={"width": random.randint(1800, 1920), "height": random.randint(900, 1080)},
+        locale="he-IL"
+    )
+    page = context.new_page()
+    stealth = Stealth()
+    stealth.apply_stealth_sync(page)
+
+    ads = []
+    try:
+        # Retry logic
+        for attempt in range(3):
+            try:
+                page.goto(MASTER_SCRAPE_URL, timeout=30000)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    logger.warning(f"Page load attempt {attempt+1} failed: {e}. Retrying in 10s...")
+                    time.sleep(10)
+                else:
+                    raise
+
+        # Wait for page to fully load (instead of fixed sleep)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass  # Timeout is fine — page is likely loaded enough
+
+        page.mouse.wheel(0, 1000)
+        time.sleep(1)  # Brief pause for lazy-loaded items to render
+
+        items = page.locator("li[data-nagish='feed-item-list-box']").all()
+        if not items:
+            items = page.locator(".feed-item").all()
+
+        logger.info(f"[Smart Batch] Found {len(items)} items in feed.")
+
+        for i, item in enumerate(items[:20]):
+            try:
+                # --- Link ---
+                link_el = item.locator("a").first
+                if link_el.count() == 0:
+                    continue
+                href = link_el.get_attribute("href")
+                if not href:
+                    continue
+                full_link = f"https://www.yad2.co.il{href}" if href.startswith("/") else href
+                ad_id = extract_ad_id(full_link)
+                if not ad_id:
+                    continue
+
+                # --- Date from image URL (Yad2 embeds upload date: /Pic/YYYY/MM/DD/) ---
+                parsed_date = None
+                img_els = item.locator("img").all()
+                for img in img_els:
+                    src = img.get_attribute("src") or ""
+                    img_match = re.search(r"/Pic/(\d{4})(\d{2})/(\d{2})/", src)
+                    if img_match:
+                        try:
+                            parsed_date = datetime(
+                                int(img_match.group(1)),
+                                int(img_match.group(2)),
+                                int(img_match.group(3))
+                            ).date()
+                            break
+                        except ValueError:
+                            pass
+
+                today = datetime.now().date()
+                if parsed_date and (today - parsed_date).days > 3:
+                    logger.debug(f"Item {i} ({ad_id}): Too old ({parsed_date}). Skipping.")
+                    continue
+                # If no date found, keep it (feed is newest-first, so it's likely recent)
+
+                # --- Fields (using classes seen in DOM inspection) ---
+                # Price: class contains 'feed-item-price_price'
+                price_el = item.locator('[class*="feed-item-price_price"]').first
+                price_str = price_el.inner_text().strip() if price_el.count() else "N/A"
+                
+                # Address/heading: class contains 'item-data-content_heading'
+                heading_el = item.locator('[class*="item-data-content_heading"]').first
+                address = heading_el.inner_text().strip() if heading_el.count() else ""
+                
+                # Info line 1 (neighborhood/city/type): class contains 'first'
+                info1_el = item.locator('[class*="item-data-content_itemInfoLine"][class*="first"]').first
+                city_disp = info1_el.inner_text().strip() if info1_el.count() else ""
+                
+                # Info line 2 (rooms/floor/size): second itemInfoLine (no 'first' class)
+                info_lines = item.locator('[class*="item-data-content_itemInfoLine"]').all()
+                rooms_str = ""
+                for il in info_lines:
+                    cls = il.get_attribute("class") or ""
+                    if "first" not in cls:
+                        rooms_str = il.inner_text().strip()
+                        break
+                
+                feed_text = item.inner_text()
+
+                # Numeric conversions for filtering
+                price_numeric = int(''.join(filter(str.isdigit, price_str)) or 0)
+                rooms_match = re.search(r'[\d.]+', rooms_str)
+                rooms_numeric = float(rooms_match.group()) if rooms_match else -1
+
+                if not price_numeric and not address:
+                    # Probably an ad/banner item, skip it
+                    continue
+
+                ads.append({
+                    'ad_id': ad_id,
+                    'full_link': full_link,
+                    'price': price_str,
+                    'price_numeric': price_numeric,
+                    'address': address,
+                    'city': city_disp,
+                    'rooms': rooms_str,
+                    'rooms_numeric': rooms_numeric,
+                    'feed_text': feed_text,
+                })
+
+            except Exception as e:
+                logger.error(f"Error parsing item {i}: {e}")
+
+    except Exception as e:
+        logger.error(f"Error during master scrape: {e}")
+    finally:
+        context.close()
+
+    return ads
+
+
 def scrape_cycle():
-    logger.info("--- Starting Scraper Cycle ---")
+    logger.info("--- Starting Smart Batch Scraper Cycle ---")
     users = load_users()
-    
+
     if not users:
         logger.info("No users configured.")
         return
 
+    active_users = {uid: udata for uid, udata in users.items() if udata.get('active', True)}
+    if not active_users:
+        logger.info("All users paused. Skipping scrape.")
+        return
+
+    logger.info(f"[Smart Batch] 1 scrape for {len(active_users)} active user(s).")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        
-        for user_id, user_data in users.items():
-            search_url = user_data.get("url")
-            active = user_data.get("active", True)
-            
-            if not active:
-                logger.info(f"User {user_id} notifications disabled. Skipping.")
+        ads = _scrape_all_items(browser)
+        browser.close()
+
+    logger.info(f"[Smart Batch] Scraped {len(ads)} valid candidate ads.")
+
+    # --- Fan-out: check each ad against each user ---
+    total_sent = 0
+    for user_id, user_data in active_users.items():
+        # Skip users who haven't completed setup (no price/rooms filters set)
+        user_url = user_data.get('url', '')
+        if 'price=' not in user_url or 'rooms=' not in user_url:
+            logger.info(f"User {user_id}: skipped (no filters set yet).")
+            continue
+
+        user_sent = 0
+        user_skipped_price = 0
+        user_skipped_rooms = 0
+        user_skipped_keyword = 0
+        user_skipped_nb = 0
+        user_skipped_dedup = 0
+
+        for ad in ads:
+            # Dedup check (early, cheap)
+            if is_ad_notified(ad['ad_id'], user_id):
+                user_skipped_dedup += 1
                 continue
 
-            logger.info(f"Checking for user {user_id}...")
-            
-            # Stealth Context
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                viewport={"width": random.randint(1800, 1920), "height": random.randint(900, 1080)},
-                locale="he-IL"
+            # Price range
+            min_price, max_price, min_rooms, max_rooms = _parse_user_price_rooms(user_data.get('url', ''))
+            pn = ad['price_numeric']
+            if pn > 0 and not (min_price <= pn <= max_price):
+                user_skipped_price += 1
+                continue
+
+            # Rooms range
+            rn = ad['rooms_numeric']
+            if rn >= 0 and not (min_rooms <= rn <= max_rooms):
+                user_skipped_rooms += 1
+                continue
+
+            # Keywords
+            if contains_blocked_keywords(ad['feed_text'], user_data.get('keywords', '')):
+                user_skipped_keyword += 1
+                continue
+
+            # Neighborhoods
+            if not satisfies_neighborhood_filter(ad['feed_text'], user_data.get('neighborhoods', '')):
+                user_skipped_nb += 1
+                continue
+
+            # --- Send ---
+            msg = (
+                f"\u200F🏠 *מציאה חדשה!*\n"
+                f"\u200F📍 {ad['address']}, {ad['city']}\n"
+                f"\u200F💰 {ad['price']}\n"
+                f"\u200F🛏️ {ad['rooms']}\n"
+                f"\u200F🔗 [לצפייה במודעה]({ad['full_link']})"
             )
-            page = context.new_page()
-            stealth = Stealth()
-            stealth.apply_stealth_sync(page)
-            
             try:
-                # Retry logic for page loading
-                for attempt in range(3):
-                    try:
-                        page.goto(search_url, timeout=30000)
-                        break
-                    except Exception as e:
-                        if attempt < 2:
-                            logger.warning(f"Page load attempt {attempt+1} failed for user {user_id}: {e}. Retrying in 10s...")
-                            time.sleep(10)
-                        else:
-                            raise
-                
-                time.sleep(5) # Initial load
-                page.mouse.wheel(0, 1000) # Trigger lazy load
-                time.sleep(3)
-                
-                # Check for feed items
-                items = page.locator("li[data-nagish='feed-item-list-box']").all()
-                if not items:
-                    items = page.locator(".feed-item").all() # Fallback selector
-                
-                logger.info(f"Found {len(items)} items in feed.")
-                
-                new_ads_count = 0
-                already_notified_count = 0
-                too_old_count = 0
-                no_date_count = 0
-                no_link_count = 0
-                error_count = 0
-                # Process top 15 items (sorted by newest first via order=1)
-                for i, item in enumerate(items[:15]):
-                    logger.debug(f"--- Processing Item {i+1}/{min(len(items), 15)} ---")
-                    try:
-                        # Extract Link
-                        link_el = item.locator("a").first
-                        if link_el.count() == 0:
-                            logger.debug(f"Item {i}: No link element found. Skipping.")
-                            no_link_count += 1
-                            continue
-                            
-                        href = link_el.get_attribute("href")
-                        if not href: 
-                            logger.debug(f"Item {i}: No href attribute. Skipping.")
-                            no_link_count += 1
-                            continue
-                        
-                        full_link = f"https://www.yad2.co.il{href}" if href.startswith("/") else href
-                        ad_id = extract_ad_id(full_link)
-                         
-                        if not ad_id: 
-                            logger.debug(f"Item {i}: Could not extract Ad ID from {full_link}. Skipping.")
-                            no_link_count += 1
-                            continue
-                        
-                        
-                        logger.debug(f"Item {i}: Ad ID {ad_id} found.")
-                        
-                        # Deduplication (Check EARLY)
-                        if is_ad_notified(ad_id, user_id):
-                            logger.debug(f"Ad {ad_id}: Already notified. Skipping.")
-                            already_notified_count += 1
-                            continue
-
-                        # Extract Price early for logging
-                        price = item.locator("[data-testid='price']").inner_text().strip() if item.locator("[data-testid='price']").count() else "N/A"
-
-                        # --- Date Filtering (Strict Class Match) ---
-                        try:
-                            date_el = item.locator('span[class*="report-ad_createdAt"]').first
-                            
-                            parsed_date = None
-                            date_text_log = "N/A"
-
-                            if date_el.count() > 0:
-                                raw_text = date_el.inner_text()
-                                date_text_log = raw_text
-                                
-                                match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{2})", raw_text)
-                                if match:
-                                    day = int(match.group(1))
-                                    month = int(match.group(2))
-                                    year_short = int(match.group(3))
-                                    year_full = 2000 + year_short
-                                    
-                                    parsed_date = datetime(year_full, month, day).date()
-                                    logger.debug(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Regex).")
-                                else:
-                                    parsed_date = parse_hebrew_date(raw_text)
-                                    logger.debug(f"Item {i}: Parsed date {parsed_date} from '{raw_text}' (Fallback).")
-                            else:
-                                # Fallback: Try extracting date from Image URL
-                                img_el = item.locator("img").first
-                                if img_el.count() > 0:
-                                    src = img_el.get_attribute("src")
-                                    if src:
-                                        img_match = re.search(r"/Pic/(\d{4})(\d{2})/(\d{2})/", src)
-                                        if img_match:
-                                            y = int(img_match.group(1))
-                                            m = int(img_match.group(2))
-                                            d = int(img_match.group(3))
-                                            parsed_date = datetime(y, m, d).date()
-                                            logger.debug(f"Item {i}: Parsed date {parsed_date} from Image URL.")
-                                
-                                if not parsed_date:
-                                    logger.debug(f"Item {i}: Date selector NOT found & Image URL failed.")
-                                    pass
-                            
-                            if not parsed_date:
-                                logger.debug(f"Ad {ad_id}: No valid date found. Skipping.")
-                                no_date_count += 1
-                                continue
-                            
-                            # 3-Day Filter
-                            today = datetime.now().date()
-                            delta = (today - parsed_date).days
-                            
-                            logger.debug(f"Ad {ad_id} | Price: {price} | Date: {parsed_date} | Age: {delta} days")
-
-                            if delta > 3:
-                                too_old_count += 1
-                                continue
-                            
-                        except Exception as e:
-                            logger.error(f"Error checking date for {ad_id}: {e}")
-                            error_count += 1
-                            continue
-
-                        # New Ad Found! Extract Details
-                        address = item.locator("[data-testid='street-name']").inner_text().strip() if item.locator("[data-testid='street-name']").count() else ""
-                        city = item.locator("[data-testid='item-info-line-1st']").inner_text().strip() if item.locator("[data-testid='item-info-line-1st']").count() else ""
-                        rooms = item.locator("[data-testid='item-info-line-2nd']").inner_text().strip() if item.locator("[data-testid='item-info-line-2nd']").count() else ""
-
-                        msg = (
-                            f"🏠 *מציאה חדשה!*\n"
-                            f"📍 {address}, {city}\n"
-                            f"💰 {price}\n"
-                            f"🛏️ {rooms}\n"
-                            f"🔗 [לצפייה במודעה]({full_link})"
-                        )
-                        
-                        # Send Notification
-                        logger.info(f"Sending notification to {user_id} for ad {ad_id}")
-                        try:
-                            bot.send_message(user_id, msg, parse_mode="Markdown")
-                            mark_ad_notified(ad_id, user_id)
-                            logger.info(f"Ad {ad_id} sent to user {user_id}.")
-                            new_ads_count += 1
-                        except Exception as e:
-                            logger.error(f"Failed to send to {user_id}: {e}")
-                            
-                    except Exception as e:
-                        logger.error(f"Error parsing item {i}: {e}")
-                        error_count += 1
-                
-                processed = min(len(items), 15)
-                logger.info(f"📊 Scan Summary for user {user_id}: "
-                      f"Found {len(items)} items | "
-                      f"Processed {processed} | "
-                      f"{already_notified_count} already notified | "
-                      f"{too_old_count} too old | "
-                      f"{no_date_count} no date | "
-                      f"{no_link_count} no link | "
-                      f"{error_count} errors | "
-                      f"{new_ads_count} NEW sent")
-                
+                markup = types.InlineKeyboardMarkup()
+                btn_save = types.InlineKeyboardButton(
+                    "⭐ שמור דירה",
+                    callback_data=f"save_ad_{ad['ad_id']}_{ad['price_numeric']}"
+                )
+                markup.add(btn_save)
+                bot.send_message(user_id, msg, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
+                mark_ad_notified(ad['ad_id'], user_id)
+                user_sent += 1
+                total_sent += 1
             except Exception as e:
-                logger.error(f"Error scraping for user {user_id}: {e}")
-            finally:
-                context.close()
-                time.sleep(random.randint(5, 10)) # Pause between users
-        
-        browser.close()
+                logger.error(f"Failed to send ad {ad['ad_id']} to user {user_id}: {e}")
+
+        logger.info(
+            f"User {user_id}: sent={user_sent} | "
+            f"dedup={user_skipped_dedup} | price={user_skipped_price} | "
+            f"rooms={user_skipped_rooms} | kw={user_skipped_keyword} | nb={user_skipped_nb}"
+        )
+
+    logger.info(f"[Smart Batch] Cycle complete. Total alerts sent: {total_sent}")
+
 
 def run_scraper():
     while True:
@@ -231,7 +323,7 @@ def run_scraper():
             scrape_cycle()
         except Exception as e:
             logger.critical(f"Critical Scraper Error: {e}")
-        
+
         sleep_time = random.randint(MIN_SLEEP, MAX_SLEEP)
         logger.info(f"Sleeping for {sleep_time // 60} minutes ({sleep_time}s)...")
         time.sleep(sleep_time)
