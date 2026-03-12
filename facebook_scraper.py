@@ -201,7 +201,6 @@ def _scrape_cycle():
             msg = (
                 f"\u200F👤 *פוסט חדש בפייסבוק!*\n"
                 f"\u200F{post_text}\n"
-                f"\u200F🔗 [לצפייה בפוסט]({post_url})"
             )
 
             try:
@@ -210,10 +209,15 @@ def _scrape_cycle():
                 if not price_numeric:
                     price_numeric = "0"
                     
-                # Format inline keyboard for saving the ad
+                # Use a shorter ID for the button to avoid Telegram's 64-byte callback_data limit
+                short_id = content_hash.replace("fb_", "")[:16]
+                
+                # Format inline keyboard
                 markup = types.InlineKeyboardMarkup()
-                btn_save = types.InlineKeyboardButton("⭐ שמור דירה", callback_data=f"save_ad_{post_id}_{price_numeric}")
-                markup.add(btn_save)
+                btn_link = types.InlineKeyboardButton("🔗 לצפייה בפוסט", url=post_url)
+                btn_save = types.InlineKeyboardButton("⭐ שמור דירה", callback_data=f"save_ad_{short_id}_{price_numeric}")
+                markup.row(btn_link)
+                markup.row(btn_save)
 
                 bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
                 mark_ad_notified(content_hash, user_id)
