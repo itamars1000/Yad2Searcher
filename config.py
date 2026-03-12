@@ -26,7 +26,7 @@ APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 if not APIFY_TOKEN:
     raise ValueError("No APIFY_TOKEN found in environment variables")
 
-ENABLE_FACEBOOK_SCRAPER = False # Set to True to enable Facebook scraping (consumes Apify API credits)
+ENABLE_FACEBOOK_SCRAPER = True # Set to True to enable Facebook scraping (consumes Apify API credits)
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Your personal Telegram Chat ID (set in .env)
 

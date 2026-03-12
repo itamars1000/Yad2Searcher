@@ -34,7 +34,7 @@ def _fetch_posts():
     headers = {"Authorization": f"Bearer {APIFY_TOKEN}"}
     payload = {
         "startUrls": [{"url": url} for url in FACEBOOK_GROUPS],
-        "resultsLimit": 1,
+        "resultsLimit": 3,
     }
 
     # Start the run
@@ -88,10 +88,10 @@ def _scrape_cycle():
         logger.info("No posts returned from Apify.")
         return
 
-    logger.info(f"[Smart Batch FB] 1 Apify call → {len(posts)} posts → fan-out to {len(active_users)} active user(s).")
-
     users = load_users()
     active_users = {uid: data for uid, data in users.items() if data.get("active")}
+
+    logger.info(f"[Smart Batch FB] 1 Apify call → {len(posts)} posts → fan-out to {len(active_users)} active user(s).")
 
     if not active_users:
         logger.info("No active users.")
