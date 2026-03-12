@@ -47,7 +47,6 @@ user_data = {}
 # --- Facebook Groups Scraping ---
 FACEBOOK_GROUPS = [
     "https://www.facebook.com/groups/457465901082882?locale=he_IL",
-    "https://www.facebook.com/groups/1749183625345821?locale=he_IL",
     "https://www.facebook.com/groups/333022240594651?locale=he_IL",
     "https://www.facebook.com/groups/101875683484689?locale=he_IL",
     "https://www.facebook.com/groups/305724686290054/?locale=he_IL",
