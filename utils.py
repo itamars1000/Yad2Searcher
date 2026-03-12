@@ -99,8 +99,13 @@ def parse_facebook_post(text):
                     rooms = num
                     break
 
-            # Special check for 1-room / studio
-            if not rooms and re.search(r"\b(דירת חדר|סטודיו|חדר אחד)\b", clean_text):
+        # Special check for 1-room / studio / single room mentioned
+        if not rooms:
+            single_room_patterns = [
+                r"\b(דירת חדר|סטודיו|חדר אחד|חדר להשכרה|חדר בודד|חדר פנוי|מתפנה חדר)\b",
+                r"בדירת (?:\d|שני|שתי|שלוש|שלושה|ארבע|ארבעה) שותפים" # If it says "in a X roommate apt", it's usually 1 room
+            ]
+            if any(re.search(p, clean_text) for p in single_room_patterns):
                 rooms = 1.0
 
         # 3. Extract Price
@@ -115,11 +120,19 @@ def parse_facebook_post(text):
             if alef_match:
                 price = int(float(alef_match.group(1)) * 1000)
 
-        # Strategy C: First logical 4-5 digit rent price, skipping common years
+        # Strategy C: Look for labels followed by numbers
         if not price:
-            for p in re.findall(r'(?<!\d)(\d{4,5})(?!\d)', clean_text):
+            # Labels: מחיר, שכ"ד, שכירות, ₪, NIS
+            label_match = re.search(r"(?:מחיר|שכ\"ד|שכד|שכירות|₪|NIS)[:\s\-]*(\d{4,5})", clean_text, re.IGNORECASE)
+            if label_match:
+                price = int(label_match.group(1))
+
+        # Strategy D: First logical 4-5 digit rent price, skipping common years
+        if not price:
+            found_prices = re.findall(r'(?<!\d)(\d{4,5})(?!\d)', clean_text)
+            for p in found_prices:
                 val = int(p)
-                if 2000 <= val <= 20000 and val not in (2024, 2025, 2026, 2027):
+                if 2500 <= val <= 20000 and val not in (2024, 2025, 2026, 2027):
                     price = val
                     break
 
