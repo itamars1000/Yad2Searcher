@@ -55,7 +55,7 @@ def _fetch_posts():
     headers = {"Authorization": f"Bearer {APIFY_TOKEN}"}
     payload = {
         "startUrls": [{"url": url} for url in FACEBOOK_GROUPS],
-        "resultsLimit": 5,
+        "resultsLimit": 3,
     }
 
     # Start the run

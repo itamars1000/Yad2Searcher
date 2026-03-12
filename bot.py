@@ -446,7 +446,13 @@ def handle_neighborhood_callbacks(call):
     if action == "menu":
         try: bot.delete_message(chat_id, call.message.message_id)
         except: pass
-        bot.send_message(chat_id, "\u200F🏙️ **סינון שכונות:**\n\u200F(אם לא תבחר אף שכונה תקבל דירות מכל העיר)", reply_markup=get_neighborhoods_markup(current_nbs_str), parse_mode="Markdown")
+        text = (
+            "\u200F🏙️ **בחירת שכונות למעקב:**\n"
+            "\u200F*(אם לא תבחר אף שכונה, תקבל דירות מכל העיר)*\n\n"
+            "\u200F✔️ - שכונות שנבחרו (לחץ להסרה)\n"
+            "\u200F➕ - הוספת שכונה מהרשימה"
+        )
+        bot.send_message(chat_id, text, reply_markup=get_neighborhoods_markup(current_nbs_str), parse_mode="Markdown")
         
     elif action.startswith("rm_"):
         word = action.replace("rm_", "")
@@ -455,7 +461,13 @@ def handle_neighborhood_callbacks(call):
         update_user_neighborhoods(chat_id, new_nbs)
         try: bot.delete_message(chat_id, call.message.message_id)
         except: pass
-        bot.send_message(chat_id, "\u200F🏙️ **סינון שכונות:**\n\u200F(אם לא תבחר אף שכונה תקבל דירות מכל העיר)", reply_markup=get_neighborhoods_markup(new_nbs), parse_mode="Markdown")
+        text = (
+            "\u200F🏙️ **בחירת שכונות למעקב:**\n"
+            "\u200F*(אם לא תבחר אף שכונה, תקבל דירות מכל העיר)*\n\n"
+            "\u200F✔️ - שכונות שנבחרו (לחץ להסרה)\n"
+            "\u200F➕ - הוספת שכונה מהרשימה"
+        )
+        bot.send_message(chat_id, text, reply_markup=get_neighborhoods_markup(new_nbs), parse_mode="Markdown")
         
     elif action.startswith("add_"):
         word = action.replace("add_", "")
@@ -465,7 +477,13 @@ def handle_neighborhood_callbacks(call):
         update_user_neighborhoods(chat_id, new_nbs)
         try: bot.delete_message(chat_id, call.message.message_id)
         except: pass
-        bot.send_message(chat_id, "\u200F🏙️ **סינון שכונות:**\n\u200F(אם לא תבחר אף שכונה תקבל דירות מכל העיר)", reply_markup=get_neighborhoods_markup(new_nbs), parse_mode="Markdown")
+        text = (
+            "\u200F🏙️ **בחירת שכונות למעקב:**\n"
+            "\u200F*(אם לא תבחר אף שכונה, תקבל דירות מכל העיר)*\n\n"
+            "\u200F✔️ - שכונות שנבחרו (לחץ להסרה)\n"
+            "\u200F➕ - הוספת שכונה מהרשימה"
+        )
+        bot.send_message(chat_id, text, reply_markup=get_neighborhoods_markup(new_nbs), parse_mode="Markdown")
         
     elif action == "custom":
         msg = bot.send_message(chat_id, "\u200Fהקלד שם או חלקיות שם של שכונה להוספה (או כמה מופרדות בפסיק):", parse_mode="Markdown")

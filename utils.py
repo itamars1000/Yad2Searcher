@@ -280,7 +280,7 @@ def get_neighborhoods_markup(neighborhoods_str):
     
     # Active neighborhoods (Remove buttons)
     if current_nbs:
-        remove_btns = [types.InlineKeyboardButton(f"❌ {nb}", callback_data=f"nb_rm_{nb}") for nb in current_nbs]
+        remove_btns = [types.InlineKeyboardButton(f"✔️ {nb}", callback_data=f"nb_rm_{nb}") for nb in current_nbs]
         for i in range(0, len(remove_btns), 2):
             markup.add(*remove_btns[i:i+2])
             
