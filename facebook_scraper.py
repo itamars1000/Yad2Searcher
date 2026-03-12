@@ -157,10 +157,10 @@ def _scrape_cycle():
             continue
 
         for user_id, user_data in active_users.items():
-            # Skip users who haven't completed setup (no price/rooms filters set)
+            # Skip users who haven't completed setup (no URL at all)
             user_url = user_data.get("url", "")
-            if 'price=' not in user_url or 'rooms=' not in user_url:
-                logger.debug(f"FB: User {user_id} skipped (no filters set yet).")
+            if not user_url:
+                logger.debug(f"FB: User {user_id} skipped (no URL set).")
                 continue
 
             limits = _parse_user_limits(user_data.get("url", ""))

@@ -380,9 +380,19 @@ def satisfies_neighborhood_filter(text, neighborhoods_str):
     if not neighborhoods_str:
         return True
     
-    nbs = [k.strip() for k in neighborhoods_str.split(',') if k.strip()]
+    nbs = [k.strip().lower() for k in neighborhoods_str.split(',') if k.strip()]
     if not nbs:
         return True
         
-    return any(nb in text for nb in nbs)
+    clean_text = text.lower()
+    for nb in nbs:
+        if nb in clean_text:
+            return True
+        # Hebrew prefix handling: if neighborhood starts with "ה" (the), also check without it
+        if nb.startswith("ה") and len(nb) > 2:
+            no_he = nb[1:]
+            if no_he in clean_text:
+                return True
+                
+    return False
 
