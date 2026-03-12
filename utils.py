@@ -70,16 +70,27 @@ def parse_facebook_post(text):
     if not text:
         return None
 
-    # 1. Clean: remove commas, currency symbols, and Facebook invisible unicode (LTR/RTL marks, zero-width spaces)
+    # 1. Clean: remove commas, currency symbols, and Facebook invisible unicode
     clean_text = text.replace(',', '').replace('\u20aa', '').replace('\u05e9"\u05d7', '')
     clean_text = re.sub(r'[\u200B-\u200D\uFEFF\u200E\u200F\xa0]', ' ', clean_text)
+
+    # 1b. Skip posts where the user is LOOKING for an apartment (Seeking)
+    if re.search(r"\b(מחפש|מחפשת|מחפשים|דרושה|דרוש|מחפש/ת)\b", clean_text) and "להשכרה" not in clean_text[:30]:
+        # If "להשכרה" is at the very start, it's likely an ad. Otherwise, "מחפש" usually means seeking.
+        if not re.search(r"(?:מציע|מציעה|להשכרה|דירה להשכרה)", clean_text[:50]):
+            return None
 
     rooms = None
     price = None
 
     try:
-        # 2. Extract Rooms (e.g., "3 חדרים", "2.5 חד'", "4 ח")
-        rooms_match = re.search(r"(\d{1,2}(?:\.\d)?)\s*[-]*\s*(?:חדרים|חד'|חד\b|ח\b)", clean_text)
+        # 2. Extract Rooms (e.g., "3 חדרים", "2.5 חד'", "4 ח", "3 חדרי שינה", "דירת 4.5 ענקית")
+        # Pattern covers number + optional adjective + room label
+        rooms_match = re.search(r"(\d{1,2}(?:\.\d)?)\s*(?:[^\w\s]{0,3}\s*(?:\w+\s+){0,2})?(?:חדרים|חדר|חדרי|חד'|חד\b|ח\b)", clean_text)
+        if not rooms_match:
+            # Fallback: "דירת 4 חדרים" or "דירת 4"
+            rooms_match = re.search(r"דירת\s*(\d{1,2}(?:\.\d)?)", clean_text)
+        
         if rooms_match:
             try:
                 rooms = float(rooms_match.group(1))
