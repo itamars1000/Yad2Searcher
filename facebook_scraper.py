@@ -1,6 +1,6 @@
-import time
 import random
 import requests
+import html
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from telebot import types
@@ -198,9 +198,11 @@ def _scrape_cycle():
             # The instruction implies the message content is still relevant for context,
             # but the actual sending mechanism changes.
             # Keeping the msg variable for clarity if needed elsewhere, though it's not used in the new send_apartment_alert call.
+            # Escape HTML special characters to prevent "can't parse entities" errors
+            safe_text = html.escape(post_text)
             msg = (
-                f"\u200F👤 *פוסט חדש בפייסבוק!*\n"
-                f"\u200F{post_text}\n"
+                f"\u200F👤 <b>פוסט חדש בפייסבוק!</b>\n"
+                f"\u200F{safe_text}\n"
             )
 
             try:
@@ -219,7 +221,7 @@ def _scrape_cycle():
                 markup.row(btn_link)
                 markup.row(btn_save)
 
-                bot.send_message(user_id, msg, parse_mode="Markdown", reply_markup=markup, disable_web_page_preview=True)
+                bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
                 mark_ad_notified(content_hash, user_id)
                 logger.info(f"Facebook Post {post_id} sent to user {user_id}.")
                 sent_count += 1
