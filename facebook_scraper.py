@@ -16,13 +16,33 @@ def _parse_user_limits(url):
     """Extracts min/max rooms and price from a stored Yad2 search URL."""
     try:
         params = parse_qs(urlparse(url).query)
-        rooms_range = params.get("rooms", ["0-99"])[0].split("-")
-        price_range = params.get("price", ["0-9999999"])[0].split("-")
+        
+        # Helper to parse range strings like "3-5", "4-", or "-10"
+        def parse_range(param_name, default_min, default_max, is_float=False):
+            val = params.get(param_name, [f"{default_min}-{default_max}"])[0]
+            parts = val.split("-")
+            
+            # Ensure we have at least 2 parts even if input is "3" or ""
+            while len(parts) < 2:
+                parts.append("")
+                
+            p_min = parts[0].strip()
+            p_max = parts[1].strip()
+            
+            conv = float if is_float else int
+            
+            res_min = conv(p_min) if p_min else conv(default_min)
+            res_max = conv(p_max) if p_max else conv(default_max)
+            return res_min, res_max
+
+        min_rooms, max_rooms = parse_range("rooms", 0, 99, is_float=True)
+        min_price, max_price = parse_range("price", 0, 9999999)
+
         return {
-            "min_rooms": float(rooms_range[0]),
-            "max_rooms": float(rooms_range[1]),
-            "min_price": int(price_range[0]),
-            "max_price": int(price_range[1]),
+            "min_rooms": min_rooms,
+            "max_rooms": max_rooms,
+            "min_price": min_price,
+            "max_price": max_price,
         }
     except Exception as e:
         logger.error(f"Error parsing user URL limits: {e}")
