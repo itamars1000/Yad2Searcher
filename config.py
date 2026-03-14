@@ -35,6 +35,9 @@ DB_FILE = "production.db"
 MIN_SLEEP = 28 * 60  # 28 minutes
 MAX_SLEEP = 32 * 60  # 32 minutes
 
+FB_MIN_SLEEP = 58 * 60  # 58 minutes
+FB_MAX_SLEEP = 62 * 60  # 62 minutes
+
 # Single broad URL for Smart Batching: all Tel Aviv, newest first, no price/rooms filter
 # Individual per-user price/rooms filters are applied in code after scraping.
 MASTER_SCRAPE_URL = "https://www.yad2.co.il/realestate/rent?city=5000&order=1"

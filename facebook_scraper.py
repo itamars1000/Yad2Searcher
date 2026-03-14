@@ -6,7 +6,7 @@ from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from telebot import types
 
-from config import bot, APIFY_TOKEN, APIFY_ACTOR_URL, FACEBOOK_GROUPS, MIN_SLEEP, MAX_SLEEP, logger
+from config import bot, APIFY_TOKEN, APIFY_ACTOR_URL, FACEBOOK_GROUPS, FB_MIN_SLEEP, FB_MAX_SLEEP, logger
 from database import load_users, is_ad_notified, mark_ad_notified
 from utils import parse_facebook_post, generate_post_hash, send_apartment_alert, contains_blocked_keywords, satisfies_neighborhood_filter
 
@@ -253,7 +253,7 @@ def run_facebook_scraper():
         logger.critical(f"Critical Facebook Scraper Error: {e}")
 
     while True:
-        sleep_time = random.randint(MIN_SLEEP, MAX_SLEEP)
+        sleep_time = random.randint(FB_MIN_SLEEP, FB_MAX_SLEEP)
         logger.info(f"Facebook scraper sleeping for {sleep_time // 60} minutes ({sleep_time}s)...")
         time.sleep(sleep_time)
 
