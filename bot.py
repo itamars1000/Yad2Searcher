@@ -233,6 +233,21 @@ def handle_menu_callbacks(call):
         try: bot.delete_message(chat_id, call.message.message_id)
         except: pass
         send_dashboard(chat_id)
+
+    elif action == "paybox":
+        try: bot.delete_message(chat_id, call.message.message_id)
+        except: pass
+        from config import PAYBOX_LINK
+        text = (
+            "\u200F*תמיכה בבוט* ☕\n\n"
+            "\u200Fאהלן! הבוט הזה מופעל באהבה כדי לעזור לכולנו למצוא דירה ושותפים בקלות ובמהירות.\n"
+            "\u200Fכדי שהבוט יוכל להמשיך לסרוק את יד2 וקבוצות פייסבוק 24/7 באופן רציף, ולשלוח התראות באופן מיידי בלי לקרוס, ישנן עלויות חודשיות של אחסון בשרתים שעומדות על כמה מאות שקלים בחודש.\n\n"
+            "\u200Fאם הבוט עזר לך לחסוך זמן יקר וכאב ראש, או אפילו עזר לך למצוא דירה מדהימה - אשמח מאוד אם תשקול לתמוך בהמשך הפעילות שלו! מובן שזה לא חובה וכל סכום עוזר מאוד. 🙏"
+        )
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("למעבר לתשלום ב-PayBox 💸", url=PAYBOX_LINK))
+        markup.add(types.InlineKeyboardButton("🔙 חזור להתחלה", callback_data="menu_back"))
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
         
     elif action == "back":
         try: bot.delete_message(chat_id, call.message.message_id)
