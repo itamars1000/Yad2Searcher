@@ -5,28 +5,21 @@ import re
 from datetime import datetime
 
 from config import bot, CITIES, logger, user_data, ADMIN_CHAT_ID
-from database import load_users, add_user, update_user_keywords, update_user_neighborhoods, update_user_city, update_user_url, set_user_active, save_apartment, remove_saved_apartment, get_saved_apartments, is_apartment_saved, create_invite_code, validate_and_use_code, remove_user
+from database import load_users, add_user, update_user_keywords, update_user_neighborhoods, update_user_city, update_user_url, set_user_active, save_apartment, remove_saved_apartment, get_saved_apartments, is_apartment_saved, remove_user
 from utils import construct_url, get_cities_markup, get_price_markup, get_rooms_markup, get_keywords_markup, get_neighborhoods_markup, get_main_menu, get_saved_apartments_display
 
 # --- Telegram Bot Handlers ---
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    """Entry point: gate new users with invite code, show welcome to existing ones."""
+    """Entry point: register new users, show welcome to existing ones."""
     chat_id = message.chat.id
     users = load_users()
 
     if str(chat_id) not in users:
-        # New user — require invite code
-        user_data[chat_id] = {'awaiting_invite': True}
-        bot.send_message(
-            chat_id,
-            "👋 *ברוכים הבאים לבוט חיפוש הדירות!* 🏠\n\n"
-            "🔑 הבוט הזה פועל על בסיס הזמנה בלבד.\n"
-            "אנא הזן את קוד הגישה שקיבלת:",
-            parse_mode="Markdown"
-        )
-        return
+        # New user — register unconditionally
+        add_user(chat_id, construct_url({'city': 'תל אביב'}))
+        logger.info(f"New user {chat_id} joined directly.")
 
     # Existing user → straight to setup wizard
     welcome_text = (
@@ -36,49 +29,6 @@ def send_welcome(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🎯 בחירת מסננים", callback_data="start_setup"))
     bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="Markdown")
-
-
-# --- Invite Code Handlers ---
-
-@bot.message_handler(commands=['invite'])
-def handle_invite_command(message):
-    """Admin-only: generate a new single-use invite code."""
-    chat_id = message.chat.id
-    if not ADMIN_CHAT_ID or str(chat_id) != str(ADMIN_CHAT_ID):
-        bot.send_message(chat_id, "⛔ אין לך הרשאה לפקודה זו.")
-        return
-
-    import secrets, string
-    code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
-    create_invite_code(code)
-    bot.send_message(chat_id, f"🔑 קוד גישה חדש נוצר: `{code}`", parse_mode="Markdown")
-    logger.info(f"Admin generated invite code: {code}")
-
-
-@bot.message_handler(func=lambda m: user_data.get(m.chat.id, {}).get('awaiting_invite'))
-def verify_access_code(message):
-    """Handle invite code entry for new users."""
-    chat_id = message.chat.id
-    code = message.text.strip()
-
-    if validate_and_use_code(code, chat_id):
-        # Code is valid — register the user and proceed
-        user_data[chat_id].pop('awaiting_invite', None)
-        add_user(chat_id, construct_url({'city': 'תל אביב'}))
-        bot.send_message(chat_id, "✅ הקוד אומת בהצלחה! בואו נגדיר את החיפוש שלך.", parse_mode="Markdown")
-        logger.info(f"New user {chat_id} joined with invite code {code}")
-        # Trigger setup wizard
-        markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("🎯 בחירת מסננים", callback_data="start_setup"))
-        bot.send_message(chat_id, "🏠 *מה תחומי החיפוש שלך?* לחץ למטה להתחלה:", reply_markup=markup, parse_mode="Markdown")
-    else:
-        bot.send_message(
-            chat_id,
-            "❌ קוד שגוי או שכבר נעשה בו שימוש.\n"
-            "אנא ודא שהזנת את הקוד נכון, או פנה למנהל המערכת."
-        )
-
-
 
 # --- Delete Account ---
 
@@ -99,8 +49,7 @@ def handle_delete_command(message):
     bot.send_message(
         chat_id,
         "⚠️ *האם אתה בטוח שברצונך למחוק את החשבון?*\n\n"
-        "פעולה זו תמחק את כל הנתונים שלך (הגדרות, דירות שמורות) ולא ניתן לשחזרה.\n"
-        "כדי להצטרף שוב תצטרך קוד הזמנה חדש.",
+        "פעולה זו תמחק את כל הנתונים שלך (הגדרות, דירות שמורות) ולא ניתן לשחזרה.",
         parse_mode="Markdown",
         reply_markup=markup
     )
@@ -119,8 +68,7 @@ def handle_delete_callback(call):
         bot.send_message(
             chat_id,
             "⚠️ *האם אתה בטוח שברצונך למחוק את החשבון?*\n\n"
-            "פעולה זו תמחק את כל הנתונים שלך (הגדרות, דירות שמורות) ולא ניתן לשחזרה.\n"
-            "כדי להצטרף שוב תצטרך קוד הזמנה חדש.",
+            "פעולה זו תמחק את כל הנתונים שלך (הגדרות, דירות שמורות) ולא ניתן לשחזרה.",
             parse_mode="Markdown",
             reply_markup=markup
         )
@@ -138,7 +86,7 @@ def handle_delete_callback(call):
         bot.send_message(
             chat_id,
             "✅ החשבון שלך נמחק בהצלחה.\n"
-            "אם תרצה להצטרף שוב בעתיד, פנה למנהל לקבלת קוד הזמנה חדש."
+            "אם תרצה להצטרף שוב בעתיד, פשוט שלח /start."
         )
     else:
         bot.send_message(chat_id, "✅ הביטול בוצע. החשבון שלך נשאר פעיל.")

@@ -30,6 +30,8 @@ ENABLE_FACEBOOK_SCRAPER = True # Set to True to enable Facebook scraping (consum
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Your personal Telegram Chat ID (set in .env)
 
+PAYBOX_LINK = os.getenv("PAYBOX_LINK", "https://payboxapp.page.link/YOUR_LINK_HERE")
+
 USERS_FILE = "users.json"
 DB_FILE = "production.db"
 MIN_SLEEP = 28 * 60  # 28 minutes

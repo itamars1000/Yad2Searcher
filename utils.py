@@ -2,7 +2,7 @@ import re
 import hashlib
 from datetime import datetime, timedelta
 from telebot import types
-from config import logger, CITIES
+from config import logger, CITIES, PAYBOX_LINK
 
 # --- Helper Functions ---
 # Pre-defined keywords that users can easily add
@@ -309,6 +309,7 @@ def get_main_menu(is_active=True):
     toggle_text = "⏸️ השהה עידכונים" if is_active else "▶️ חדש עידכונים"
     btn_toggle = types.InlineKeyboardButton(toggle_text, callback_data="menu_toggle")
     btn_delete = types.InlineKeyboardButton("🗑️ מחק חשבון", callback_data="confirm_delete_prompt")
+    btn_paybox = types.InlineKeyboardButton("☕ תמיכה בבוט (PayBox)", url=PAYBOX_LINK)
 
     markup.add(btn_edit)
     markup.add(btn_keys)
@@ -316,6 +317,7 @@ def get_main_menu(is_active=True):
     markup.add(btn_saved)
     markup.add(btn_toggle)
     markup.add(btn_delete)
+    markup.add(btn_paybox)
     return markup
 
 def get_saved_apartments_display(saved_list, page=0):
