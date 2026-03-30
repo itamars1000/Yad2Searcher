@@ -4,3 +4,4 @@ schedule
 requests
 playwright-stealth
 python-dotenv
+google-genai
