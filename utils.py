@@ -94,7 +94,7 @@ Post text:
 {text}"""
 
         response = None
-        for attempt in range(5):
+        for attempt in range(7):
             try:
                 response = client.models.generate_content(
                     model='gemini-2.5-flash-lite',
