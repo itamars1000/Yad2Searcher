@@ -265,11 +265,24 @@ def _scrape_cycle():
                 # 2. Send images if any
                 if images:
                     from telebot.types import InputMediaPhoto
-                    media_group = [InputMediaPhoto(img_url) for img_url in images[:10]]
-                    try:
-                        bot.send_media_group(user_id, media_group)
-                    except Exception as media_err:
-                        logger.warning(f"Failed to send media group for {post_id}: {media_err}")
+                    import requests
+                    
+                    media_group = []
+                    for img_url in images[:10]:
+                        try:
+                            # Download image to memory to bypass Telegram CDN block (WEBPAGE_CURL_FAILED)
+                            r = requests.get(img_url, timeout=5)
+                            if r.status_code == 200:
+                                media_group.append(InputMediaPhoto(r.content))
+                        except Exception as dl_err:
+                            logger.warning(f"Failed to download image bypass: {dl_err}")
+                            continue
+
+                    if media_group:
+                        try:
+                            bot.send_media_group(user_id, media_group)
+                        except Exception as media_err:
+                            logger.warning(f"Failed to send media group for {post_id}: {media_err}")
                 
                 # 3. Send the save button separately
                 bot.send_message(user_id, "אהבתם את הדירה? תוכלו לשמור אותה במועדפים 👇", reply_markup=markup)

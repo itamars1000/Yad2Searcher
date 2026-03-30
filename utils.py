@@ -83,11 +83,12 @@ def parse_facebook_post(text):
         import time
         client = genai.Client(api_key=GEMINI_API_KEY)
         prompt = f"""You are an expert Israeli real estate data extractor. Extract the monthly rent price (in NIS) and number of rooms from the following Facebook post text.
-Return ONLY a valid JSON object with EXACTLY two keys: "price" and "rooms".
+Return ONLY a valid JSON object with EXACTLY three keys: "price", "rooms", and "is_for_rent".
 Rules:
-- If a value is missing, unclear, or it's not a standard apartment for rent (e.g. seeking an apartment, short-term sublet under a month without price), return null for that key.
+- "is_for_rent": boolean. Set to false ONLY if the post author is SEEKING/LOOKING for an apartment (מחפש/ת, מחפשים דירה/שותפים). Set to true if offering an apartment or sublet.
+- If a value is missing, return null for that key.
 - "rooms" must be a number (e.g. 3, 2.5, 4). If it's a studio/single room or one roommate room, it is 1.
-- "price" must be a number (e.g. 5000). Convert '5.5K' or '5 וחצי אלף' to 5500.
+- "price" must be a number (e.g. 5000). Convert '5K' or '5 וחצי אלף' to 5500.
 
 Post text:
 {text}"""
@@ -114,6 +115,11 @@ Post text:
                 
         data = json.loads(response.text)
         
+        is_for_rent = data.get("is_for_rent")
+        if is_for_rent is False:
+            logger.debug(f"Gemini Parsed Data: Post is seeking an apartment (is_for_rent=false), ignoring. Data: {data}")
+            return {'rooms': None, 'price': None}
+            
         price = data.get("price")
         rooms = data.get("rooms")
         
