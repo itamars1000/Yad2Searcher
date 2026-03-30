@@ -224,16 +224,33 @@ def _scrape_cycle():
                 markup.row(btn_save)
 
                 # Extract images
-                # Apify typically stores images inside 'media' array or 'images' array
                 images = []
-                # Check for list of image URLs (common in some parsers)
-                for img in post.get("images", []):
-                    if isinstance(img, str) and img.startswith("http"):
-                        images.append(img)
-                    elif isinstance(img, dict):
-                        url = img.get("url") or img.get("image")
-                        if url and url.startswith("http"):
-                            images.append(url)
+                
+                # Check for attachments (Apify Facebook Groups Scraper format)
+                for att in post.get("attachments", []):
+                    if not isinstance(att, dict):
+                        continue
+                    url = None
+                    if "image" in att and isinstance(att["image"], dict):
+                        url = att["image"].get("uri")
+                    elif "photo_image" in att and isinstance(att["photo_image"], dict):
+                        url = att["photo_image"].get("uri")
+                    else:
+                        url = att.get("thumbnail")
+                        
+                    # Verify it's not a generic media set link
+                    if url and isinstance(url, str) and url.startswith("http") and "facebook.com/media/set" not in url:
+                        images.append(url)
+
+                # Fallback for list of image URLs (common in some parsers)
+                if not images:
+                    for img in post.get("images", []):
+                        if isinstance(img, str) and img.startswith("http"):
+                            images.append(img)
+                        elif isinstance(img, dict):
+                            url = img.get("url") or img.get("image")
+                            if url and url.startswith("http"):
+                                images.append(url)
                             
                 if not images:
                     for m in post.get("media", []):
