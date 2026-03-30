@@ -259,7 +259,10 @@ def _scrape_cycle():
                             if url and url.startswith("http"):
                                 images.append(url)
 
-                # Send images if any
+                # 1. Send the main text message FIRST (so images appear underneath it)
+                bot.send_message(user_id, msg, parse_mode="HTML", disable_web_page_preview=True)
+                
+                # 2. Send images if any
                 if images:
                     from telebot.types import InputMediaPhoto
                     media_group = [InputMediaPhoto(img_url) for img_url in images[:10]]
@@ -268,8 +271,8 @@ def _scrape_cycle():
                     except Exception as media_err:
                         logger.warning(f"Failed to send media group for {post_id}: {media_err}")
                 
-                # Send text and markup
-                bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                # 3. Send the save button separately
+                bot.send_message(user_id, "אהבתם את הדירה? תוכלו לשמור אותה במועדפים 👇", reply_markup=markup)
                 
                 mark_ad_notified(content_hash, user_id)
                 logger.info(f"Facebook Post {post_id} sent to user {user_id}.")
