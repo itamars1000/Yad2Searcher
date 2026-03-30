@@ -194,20 +194,23 @@ def _scrape_cycle():
                 already_notified_count += 1
                 continue
 
-            # The original message string is not used directly with send_apartment_alert,
-            # but the parsed_data is.
-            # The instruction implies the message content is still relevant for context,
-            # but the actual sending mechanism changes.
-            # Keeping the msg variable for clarity if needed elsewhere, though it's not used in the new send_apartment_alert call.
-            # Escape HTML special characters to prevent "can't parse entities" errors
             safe_text = html.escape(post_text)
+
+            price_val = parsed_data.get("price")
+            rooms_val = parsed_data.get("rooms")
+            price_text = f"{price_val:,} ₪" if price_val else "לא ידוע"
+            rooms_text = str(rooms_val) if rooms_val is not None else "לא ידוע"
+
             msg = (
-                f"\u200F👤 <b>פוסט חדש בפייסבוק!</b>\n"
-                f"\u200F{safe_text}\n"
+                f"\u200F👤 <b>פוסט חדש בפייסבוק!</b>\n\n"
+                f"\u200F💰 <b>מחיר:</b> {price_text}\n"
+                f"\u200F🛏️ <b>חדרים:</b> {rooms_text}\n\n"
+                f"\u200F{safe_text}\n\n"
+                f"\u200F🔗 <a href='{post_url}'>למקור הפוסט בפייסבוק</a>"
             )
 
             try:
-                price_str = str(parsed_data.get("price", "לא ידוע"))
+                price_str = str(price_val) if price_val else "0"
                 price_numeric = ''.join(filter(str.isdigit, price_str))
                 if not price_numeric:
                     price_numeric = "0"
@@ -217,12 +220,40 @@ def _scrape_cycle():
                 
                 # Format inline keyboard
                 markup = types.InlineKeyboardMarkup()
-                btn_link = types.InlineKeyboardButton("🔗 לצפייה בפוסט", url=post_url)
                 btn_save = types.InlineKeyboardButton("⭐ שמור דירה", callback_data=f"save_ad_{short_id}_{price_numeric}")
-                markup.row(btn_link)
                 markup.row(btn_save)
 
+                # Extract images
+                # Apify typically stores images inside 'media' array or 'images' array
+                images = []
+                # Check for list of image URLs (common in some parsers)
+                for img in post.get("images", []):
+                    if isinstance(img, str) and img.startswith("http"):
+                        images.append(img)
+                    elif isinstance(img, dict):
+                        url = img.get("url") or img.get("image")
+                        if url and url.startswith("http"):
+                            images.append(url)
+                            
+                if not images:
+                    for m in post.get("media", []):
+                        if isinstance(m, dict):
+                            url = m.get("image") or m.get("thumbnail") or m.get("url")
+                            if url and url.startswith("http"):
+                                images.append(url)
+
+                # Send images if any
+                if images:
+                    from telebot.types import InputMediaPhoto
+                    media_group = [InputMediaPhoto(img_url) for img_url in images[:10]]
+                    try:
+                        bot.send_media_group(user_id, media_group)
+                    except Exception as media_err:
+                        logger.warning(f"Failed to send media group for {post_id}: {media_err}")
+                
+                # Send text and markup
                 bot.send_message(user_id, msg, parse_mode="HTML", reply_markup=markup, disable_web_page_preview=True)
+                
                 mark_ad_notified(content_hash, user_id)
                 logger.info(f"Facebook Post {post_id} sent to user {user_id}.")
                 sent_count += 1
