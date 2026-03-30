@@ -26,6 +26,10 @@ APIFY_TOKEN = os.getenv("APIFY_TOKEN")
 if not APIFY_TOKEN:
     raise ValueError("No APIFY_TOKEN found in environment variables")
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    logger.warning("GEMINI_API_KEY not found. AI parsing will fail if called.")
+
 ENABLE_FACEBOOK_SCRAPER = True # Set to True to enable Facebook scraping (consumes Apify API credits)
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Your personal Telegram Chat ID (set in .env)

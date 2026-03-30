@@ -66,91 +66,53 @@ def parse_hebrew_date(date_text):
 
 
 def parse_facebook_post(text):
-    """Extracts rooms (float) and price (int) from a free-text Hebrew Facebook post."""
+    """Extracts rooms (float) and price (int) from a free-text Hebrew Facebook post using Google Gemini."""
+    from config import logger, GEMINI_API_KEY
+    from google import genai
+    from google.genai import types
+    import json
+    
     if not text:
         return None
 
-    # 1. Clean: remove commas, currency symbols, and Facebook invisible unicode
-    clean_text = text.replace(',', '').replace('\u20aa', '').replace('\u05e9"\u05d7', '')
-    clean_text = re.sub(r'[\u200B-\u200D\uFEFF\u200E\u200F\xa0]', ' ', clean_text)
-
-    # 1b. Skip posts where the user is LOOKING for an apartment (Seeking)
-    if re.search(r"\b(מחפש|מחפשת|מחפשים|דרושה|דרוש|מחפש/ת)\b", clean_text) and "להשכרה" not in clean_text[:30]:
-        # If "להשכרה" is at the very start, it's likely an ad. Otherwise, "מחפש" usually means seeking.
-        if not re.search(r"(?:מציע|מציעה|להשכרה|דירה להשכרה)", clean_text[:50]):
-            return None
-
-    rooms = None
-    price = None
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not configured. Cannot parse Facebook post.")
+        return {'rooms': None, 'price': None}
 
     try:
-        # 2. Extract Rooms (e.g., "3 חדרים", "2.5 חד'", "4 ח", "3 חדרי שינה", "דירת 4.5 ענקית")
-        # Pattern covers number + optional adjective + room label
-        rooms_match = re.search(r"(\d{1,2}(?:\.\d)?)\s*(?:[^\w\s]{0,3}\s*(?:\w+\s+){0,2})?(?:חדרים|חדר|חדרי|חד'|חד\b|ח\b)", clean_text)
-        if not rooms_match:
-            # Fallback: "דירת 4 חדרים" or "דירת 4"
-            rooms_match = re.search(r"דירת\s*(\d{1,2}(?:\.\d)?)", clean_text)
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = f"""You are an expert Israeli real estate data extractor. Extract the monthly rent price (in NIS) and number of rooms from the following Facebook post text.
+Return ONLY a valid JSON object with EXACTLY two keys: "price" and "rooms".
+Rules:
+- If a value is missing, unclear, or it's not a standard apartment for rent (e.g. seeking an apartment, short-term sublet under a month without price), return null for that key.
+- "rooms" must be a number (e.g. 3, 2.5, 4). If it's a studio/single room or one roommate room, it is 1.
+- "price" must be a number (e.g. 5000). Convert '5.5K' or '5 וחצי אלף' to 5500.
+
+Post text:
+{text}"""
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            )
+        )
+        data = json.loads(response.text)
         
-        if rooms_match:
-            try:
-                rooms = float(rooms_match.group(1))
-            except ValueError:
-                pass
-        else:
-            # Fallback for Hebrew number words (e.g., "דירת שני חדרים")
-            hebrew_numbers = {
-                'שני': 2.0, 'שתי': 2.0,
-                'שלושה': 3.0, 'שלוש': 3.0,
-                'ארבעה': 4.0, 'ארבע': 4.0,
-                'חמישה': 5.0, 'חמש': 5.0,
-                'שישה': 6.0, 'שש': 6.0,
-            }
-            for word, num in hebrew_numbers.items():
-                if re.search(rf"\b{word}\s+(?:חדרים|חד'|חד\b)", clean_text):
-                    rooms = num
-                    break
-
-        # Special check for 1-room / studio / single room mentioned
-        if not rooms:
-            single_room_patterns = [
-                r"\b(דירת חדר|סטודיו|חדר אחד|חדר להשכרה|חדר בודד|חדר פנוי|מתפנה חדר)\b",
-                r"בדירת (?:\d|שני|שתי|שלוש|שלושה|ארבע|ארבעה) שותפים" # If it says "in a X roommate apt", it's usually 1 room
-            ]
-            if any(re.search(p, clean_text) for p in single_room_patterns):
-                rooms = 1.0
-
-        # 3. Extract Price
-        # Strategy A: K notation (e.g., 5.5K -> 5500)
-        k_match = re.search(r'(\d{1,2}(?:\.\d)?)\s*[kK\u05e7]', clean_text)
-        if k_match:
-            price = int(float(k_match.group(1)) * 1000)
-
-        # Strategy B: "\u05d0\u05dc\u05e3" text (e.g., 5.5 \u05d0\u05dc\u05e3 -> 5500)
-        elif not price:
-            alef_match = re.search(r'(\d{1,2}(?:\.\d)?)\s*\u05d0\u05dc\u05e3', clean_text)
-            if alef_match:
-                price = int(float(alef_match.group(1)) * 1000)
-
-        # Strategy C: Look for labels followed by numbers
-        if not price:
-            # Labels: מחיר, שכ"ד, שכירות, ₪, NIS
-            label_match = re.search(r"(?:מחיר|שכ\"ד|שכד|שכירות|₪|NIS)[:\s\-]*(\d{4,5})", clean_text, re.IGNORECASE)
-            if label_match:
-                price = int(label_match.group(1))
-
-        # Strategy D: First logical 4-5 digit rent price, skipping common years
-        if not price:
-            found_prices = re.findall(r'(?<!\d)(\d{4,5})(?!\d)', clean_text)
-            for p in found_prices:
-                val = int(p)
-                if 2500 <= val <= 20000 and val not in (2024, 2025, 2026, 2027):
-                    price = val
-                    break
-
+        price = data.get("price")
+        rooms = data.get("rooms")
+        
+        if price is not None:
+            price = int(price)
+        if rooms is not None:
+            rooms = float(rooms)
+            
+        logger.debug(f"Gemini Parsed Data: {data}")
+        return {'rooms': rooms, 'price': price}
+        
     except Exception as e:
-        logger.error(f"Error parsing Facebook post: {e}")
-
-    return {'rooms': rooms, 'price': price}
+        logger.error(f"Gemini API parsing failed: {e}")
+        return {'rooms': None, 'price': None}
 
 
 def format_apartment_message(parsed_data):
