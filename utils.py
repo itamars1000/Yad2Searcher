@@ -80,6 +80,7 @@ def parse_facebook_post(text):
         return {'rooms': None, 'price': None}
 
     try:
+        import time
         client = genai.Client(api_key=GEMINI_API_KEY)
         prompt = f"""You are an expert Israeli real estate data extractor. Extract the monthly rent price (in NIS) and number of rooms from the following Facebook post text.
 Return ONLY a valid JSON object with EXACTLY two keys: "price" and "rooms".
@@ -90,13 +91,27 @@ Rules:
 
 Post text:
 {text}"""
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-            )
-        )
+
+        response = None
+        for attempt in range(5):
+            try:
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                    )
+                )
+                break
+            except Exception as e:
+                err_str = str(e).lower()
+                if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
+                    if attempt < 4:
+                        logger.warning(f"Gemini Rate Limit Hit (429). Sleeping for 10 seconds... (Attempt {attempt+1}/5)")
+                        time.sleep(10)
+                        continue
+                raise e
+                
         data = json.loads(response.text)
         
         price = data.get("price")
@@ -108,6 +123,10 @@ Post text:
             rooms = float(rooms)
             
         logger.debug(f"Gemini Parsed Data: {data}")
+        
+        # Preventative delay to avoid hitting Gemini rate limits (free tier is aggressive)
+        time.sleep(2)
+        
         return {'rooms': rooms, 'price': price}
         
     except Exception as e:
