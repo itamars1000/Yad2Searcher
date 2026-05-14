@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Environment variables (Can be overridden)
-# ENV TELEGRAM_TOKEN=... 
+# ENV TELEGRAM_TOKEN=...
+ENV TZ=Asia/Jerusalem
 
 # Command to run the application
 CMD ["python", "bot_engine.py"]
