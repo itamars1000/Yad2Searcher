@@ -310,25 +310,27 @@ def _scrape_cycle():
         f"NEW sent {sent_count}"
     )
 
+def _sleep_until_morning():
+    """Sleep until 07:00 Israel time and log how long that is."""
+    now = datetime.now()
+    wake = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    if now >= wake:
+        wake = wake.replace(day=wake.day + 1)
+    seconds = (wake - now).total_seconds()
+    logger.info(f"Night mode active. Sleeping {int(seconds // 3600)}h {int((seconds % 3600) // 60)}m until 07:00.")
+    time.sleep(seconds)
+
+
 def run_facebook_scraper():
-    # Run immediately on startup
-    try:
-        _scrape_cycle()
-    except Exception as e:
-        logger.critical(f"Critical Facebook Scraper Error: {e}")
-
     while True:
-        sleep_time = random.randint(FB_MIN_SLEEP, FB_MAX_SLEEP)
-        logger.info(f"Facebook scraper sleeping for {sleep_time // 60} minutes ({sleep_time}s)...")
-        time.sleep(sleep_time)
-
-        hour = datetime.now().hour
-        if 0 <= hour < 7:
-            logger.info("Night mode active. Skipping Facebook scan for an hour.")
-            time.sleep(3600)
-            continue
+        if 0 <= datetime.now().hour < 7:
+            _sleep_until_morning()
 
         try:
             _scrape_cycle()
         except Exception as e:
             logger.critical(f"Critical Facebook Scraper Error: {e}")
+
+        sleep_time = random.randint(FB_MIN_SLEEP, FB_MAX_SLEEP)
+        logger.info(f"Facebook scraper sleeping for {sleep_time // 60} minutes ({sleep_time}s)...")
+        time.sleep(sleep_time)
