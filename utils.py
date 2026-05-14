@@ -107,9 +107,14 @@ Post text:
             except Exception as e:
                 err_str = str(e).lower()
                 if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
-                    if attempt < 4:
-                        logger.warning(f"Gemini Rate Limit Hit (429). Sleeping for 10 seconds... (Attempt {attempt+1}/5)")
+                    if attempt < 6:
+                        logger.warning(f"Gemini Rate Limit Hit (429). Sleeping for 10 seconds... (Attempt {attempt+1}/7)")
                         time.sleep(10)
+                        continue
+                elif '503' in err_str or 'unavailable' in err_str:
+                    if attempt < 6:
+                        logger.warning(f"Gemini 503 Unavailable. Sleeping for 5 seconds... (Attempt {attempt+1}/7)")
+                        time.sleep(5)
                         continue
                 raise e
                 
