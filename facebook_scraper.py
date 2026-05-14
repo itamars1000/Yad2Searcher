@@ -149,9 +149,12 @@ def _scrape_cycle():
         post_price = parsed_data["price"]
 
         if post_rooms is None or post_price is None:
-            apartment_keywords = ("חדרים", "שכירות", "דירה", "להשכרה")
-            if any(kw in post_text for kw in apartment_keywords):
-                logger.warning(f"MISSED APARTMENT? Raw text: {post_text}")
+            if not parsed_data.get("not_for_rent"):
+                # Only warn if this looks like a rental post we genuinely failed to parse
+                skip_words = ("סאבלט", "מחפש", "מחפשת", "מחפשים")
+                apartment_keywords = ("חדרים", "שכירות", "דירה", "להשכרה")
+                if any(kw in post_text for kw in apartment_keywords) and not any(w in post_text for w in skip_words):
+                    logger.warning(f"MISSED APARTMENT? Raw text: {post_text}")
             no_parse_count += 1
             continue
 

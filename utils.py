@@ -109,7 +109,7 @@ Posts:
             parsed = []
             for data in results:
                 if data.get("is_for_rent") is False:
-                    parsed.append({'rooms': None, 'price': None})
+                    parsed.append({'rooms': None, 'price': None, 'not_for_rent': True})
                     continue
                 price = data.get("price")
                 rooms = data.get("rooms")
@@ -117,7 +117,7 @@ Posts:
                     price = int(price)
                 if rooms is not None:
                     rooms = float(rooms)
-                parsed.append({'rooms': rooms, 'price': price})
+                parsed.append({'rooms': rooms, 'price': price, 'not_for_rent': False})
 
             logger.info(f"Gemini batch: parsed {len(texts)} posts in 1 API call.")
             return parsed
