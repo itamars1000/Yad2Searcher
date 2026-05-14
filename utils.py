@@ -274,7 +274,7 @@ def get_cities_markup():
 def get_price_markup(step):
     """step can be 'min_price' or 'max_price'"""
     markup = types.InlineKeyboardMarkup(row_width=3)
-    prices = [2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 8000, 10000]
+    prices = [2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000, 6500, 7000, 7500, 8000, 10000]
     buttons = [types.InlineKeyboardButton(f"{p} ₪", callback_data=f"setup_{step}_{p}") for p in prices]
     markup.add(*buttons)
     val = "0" if step == 'min_price' else "9999999"
