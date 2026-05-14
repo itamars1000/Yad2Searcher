@@ -361,27 +361,45 @@ def get_saved_apartments_display(saved_list, page=0):
     
     return text, markup
 
+# Ordered longest-first so compound prefixes (בה, לה…) are tried before single-letter ones
+_HEBREW_PREFIXES = ("בה", "לה", "מה", "שה", "וה", "כה", "ב", "ל", "מ", "ו", "כ", "ש", "ה")
+
+def _strip_hebrew_prefix(word):
+    """Strip one leading Hebrew preposition prefix from a single word."""
+    for prefix in _HEBREW_PREFIXES:
+        if word.startswith(prefix) and len(word) > len(prefix) + 1:
+            return word[len(prefix):]
+    return word
+
+def _normalize_hebrew(text):
+    """Return text with one leading prefix stripped from every word."""
+    return " ".join(_strip_hebrew_prefix(w) for w in text.split())
+
 def satisfies_neighborhood_filter(text, neighborhoods_str):
     """
     Returns True if neighborhoods_str is empty.
-    Else returns True only if at least one selected neighborhood is present in the text.
+    Else returns True if at least one selected neighborhood appears in the text,
+    using smart Hebrew prefix stripping (ב/ל/מ/ו/כ/ש/ה and two-letter combos)
+    on both the filter names and the text words.
     """
     if not neighborhoods_str:
         return True
-    
+
     nbs = [k.strip().lower() for k in neighborhoods_str.split(',') if k.strip()]
     if not nbs:
         return True
-        
+
     clean_text = text.lower()
+    normalized_text = _normalize_hebrew(clean_text)
+
     for nb in nbs:
+        # Direct substring match (fastest path, handles exact multi-word names)
         if nb in clean_text:
             return True
-        # Hebrew prefix handling: if neighborhood starts with "ה" (the), also check without it
-        if nb.startswith("ה") and len(nb) > 2:
-            no_he = nb[1:]
-            if no_he in clean_text:
-                return True
-                
+        # Normalized match: strip prefixes from both filter words and text words
+        nb_normalized = _normalize_hebrew(nb)
+        if nb_normalized in normalized_text:
+            return True
+
     return False
 

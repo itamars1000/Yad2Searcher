@@ -129,14 +129,17 @@ def _scrape_cycle():
     error_count = 0
 
     for post in posts:
-        post_id = str(post.get("postId") or post.get("id") or "")
         post_text = post.get("text", "")
-        post_url = post.get("url", "")
 
-        if not post_id or not post_text:
-            logger.debug("Skipping post with missing id or text.")
+        if not post_text:
+            logger.debug("Skipping post with missing text.")
             no_id_count += 1
             continue
+
+        # Apify may not return a top-level post ID; fall back to a hash of the content
+        post_id = str(post.get("postId") or post.get("id") or generate_post_hash(post_text))
+        # Use the direct post URL if available; otherwise fall back to the group URL
+        post_url = post.get("url") or post.get("facebookUrl", "")
 
         parsed_data = parse_facebook_post(post_text)
         if not parsed_data:
