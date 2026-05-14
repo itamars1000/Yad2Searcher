@@ -140,84 +140,40 @@ Posts:
     return [{'rooms': None, 'price': None}] * len(texts)
 
 
-def parse_facebook_post(text):
-    """Extracts rooms (float) and price (int) from a free-text Hebrew Facebook post using Google Gemini."""
-    from config import logger, GEMINI_API_KEY
-    from google import genai
-    from google.genai import types
-    import json
-    
-    if not text:
-        return None
-
-    if not GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY is not configured. Cannot parse Facebook post.")
-        return {'rooms': None, 'price': None}
-
+def _format_relative_time(ts):
+    """Return a Hebrew 'X ago' phrase for a SQLite TIMESTAMP string, or '' on failure."""
+    if not ts:
+        return ""
     try:
-        import time
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        prompt = f"""You are an expert Israeli real estate data extractor. Extract the monthly rent price (in NIS) and number of rooms from the following Facebook post text.
-Return ONLY a valid JSON object with EXACTLY three keys: "price", "rooms", and "is_for_rent".
-Rules:
-- "is_for_rent": boolean. Set to false ONLY if the post author is SEEKING/LOOKING for an apartment (מחפש/ת, מחפשים דירה/שותפים). Set to true if offering an apartment or sublet.
-- If a value is missing, return null for that key.
-- "rooms" must be a number (e.g. 3, 2.5, 4). If it's a studio/single room or one roommate room, it is 1.
-- "price" must be a number (e.g. 5000). Convert '5K' or '5 וחצי אלף' to 5500.
+        if isinstance(ts, str):
+            # SQLite default format: 'YYYY-MM-DD HH:MM:SS'
+            dt = datetime.strptime(ts.split('.')[0], '%Y-%m-%d %H:%M:%S')
+        else:
+            dt = ts
+        delta = datetime.now() - dt
+        secs = int(delta.total_seconds())
+        if secs < 60:
+            return "ממש עכשיו"
+        if secs < 3600:
+            return f"לפני {secs // 60} דקות"
+        if secs < 86400:
+            return f"לפני {secs // 3600} שעות"
+        return f"לפני {secs // 86400} ימים"
+    except Exception:
+        return ""
 
-Post text:
-{text}"""
 
-        response = None
-        for attempt in range(7):
-            try:
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash-lite',
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                    )
-                )
-                break
-            except Exception as e:
-                err_str = str(e).lower()
-                if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
-                    if attempt < 6:
-                        logger.warning(f"Gemini Rate Limit Hit (429). Sleeping for 10 seconds... (Attempt {attempt+1}/7)")
-                        time.sleep(10)
-                        continue
-                elif '503' in err_str or 'unavailable' in err_str:
-                    if attempt < 6:
-                        logger.warning(f"Gemini 503 Unavailable. Sleeping for 5 seconds... (Attempt {attempt+1}/7)")
-                        time.sleep(5)
-                        continue
-                raise e
-                
-        data = json.loads(response.text)
-        
-        is_for_rent = data.get("is_for_rent")
-        if is_for_rent is False:
-            logger.debug(f"Gemini Parsed Data: Post is seeking an apartment (is_for_rent=false), ignoring. Data: {data}")
-            return {'rooms': None, 'price': None}
-            
-        price = data.get("price")
-        rooms = data.get("rooms")
-        
-        if price is not None:
-            price = int(price)
-        if rooms is not None:
-            rooms = float(rooms)
-            
-        logger.debug(f"Gemini Parsed Data: {data}")
-        
-        # Preventative delay to avoid hitting Gemini rate limits (free tier is aggressive)
-        time.sleep(2)
-        
-        return {'rooms': rooms, 'price': price}
-        
-    except Exception as e:
-        logger.error(f"Gemini API parsing failed: {e}")
-        return {'rooms': None, 'price': None}
+# Patterns that signal a rental post likely contains an extractable price
+_RENTAL_SIGNAL_RE = re.compile(
+    r'(₪|ש"ח|שח\b|שכ"ד|שכר\s*דירה|להשכרה|לשכירות|אלף|\bnis\b|\bk\b)',
+    re.IGNORECASE,
+)
+
+def looks_like_rental_post(text):
+    """Quick pre-filter: True if the text plausibly contains a rental price worth sending to Gemini."""
+    if not text:
+        return False
+    return bool(_RENTAL_SIGNAL_RE.search(text))
 
 
 def format_apartment_message(parsed_data):
@@ -416,7 +372,9 @@ def get_saved_apartments_display(saved_list, page=0):
         if not short_title or short_title == "דירה שמורה":
             short_title = f"דירה שמורה {item['ad_id'][:6]}"
             
-        text_lines.append(f"\u200F{num_emoji} [{short_title}]({item['url']}) - {item['price']}")
+        saved_ago = _format_relative_time(item.get('timestamp'))
+        suffix = f" \u00B7 _\u05E0\u05E9\u05DE\u05E8\u05D4 {saved_ago}_" if saved_ago else ""
+        text_lines.append(f"\u200F{num_emoji} [{short_title}]({item['url']}) - {item['price']}{suffix}")
         rm_btns.append(types.InlineKeyboardButton(f"❌ מחק {idx}", callback_data=f"rm_ad_{item['ad_id']}_{page}"))
         
     text_lines.append(f"\n\u200Fיש לך {total_items} דירות שמורות בזיכרון.")

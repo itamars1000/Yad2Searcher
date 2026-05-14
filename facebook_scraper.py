@@ -7,8 +7,8 @@ from urllib.parse import urlparse, parse_qs
 from telebot import types
 
 from config import bot, APIFY_TOKEN, APIFY_ACTOR_URL, FACEBOOK_GROUPS, FB_MIN_SLEEP, FB_MAX_SLEEP, logger
-from database import load_users, is_ad_notified, mark_ad_notified
-from utils import parse_facebook_posts_batch, generate_post_hash, send_apartment_alert, contains_blocked_keywords, satisfies_neighborhood_filter
+from database import load_users, is_ad_notified, mark_if_new
+from utils import parse_facebook_posts_batch, generate_post_hash, send_apartment_alert, contains_blocked_keywords, satisfies_neighborhood_filter, looks_like_rental_post
 
 APIFY_BASE_URL = "https://api.apify.com/v2"
 
@@ -128,17 +128,25 @@ def _scrape_cycle():
     sent_count = 0
     error_count = 0
 
-    # Pass 1: collect posts that have text
+    # Pass 1: collect posts that have text AND look like rentals (saves Gemini calls)
     valid_posts = []
+    prefiltered_count = 0
     for post in posts:
         post_text = post.get("text", "")
         if not post_text:
             logger.warning(f"Skipping post with missing text. Keys present: {list(post.keys())}")
             no_id_count += 1
             continue
+        if not looks_like_rental_post(post_text):
+            prefiltered_count += 1
+            no_parse_count += 1
+            continue
         post_id = str(post.get("postId") or post.get("id") or generate_post_hash(post_text))
         post_url = post.get("url") or post.get("facebookUrl", "")
         valid_posts.append((post, post_id, post_url, post_text))
+
+    if prefiltered_count:
+        logger.info(f"Pre-filter: skipped {prefiltered_count} non-rental posts before Gemini batch.")
 
     # Single Gemini call for all valid posts
     batch_results = parse_facebook_posts_batch([p[3] for p in valid_posts]) if valid_posts else []
@@ -190,7 +198,8 @@ def _scrape_cycle():
                 continue
 
             content_hash = f"fb_{generate_post_hash(post_text)}"
-            if is_ad_notified(content_hash, user_id):
+            # Atomic claim: returns False if another thread already notified this user
+            if not mark_if_new(content_hash, user_id):
                 logger.debug(f"Post {post_id} (hash {content_hash}) already notified to user {user_id}. Skipping.")
                 already_notified_count += 1
                 continue
@@ -287,8 +296,8 @@ def _scrape_cycle():
                 
                 # 3. Send the save button separately
                 bot.send_message(user_id, "אהבתם את הדירה? תוכלו לשמור אותה במועדפים 👇", reply_markup=markup)
-                
-                mark_ad_notified(content_hash, user_id)
+
+                # Notification already marked atomically before sending (mark_if_new above)
                 logger.info(f"Facebook Post {post_id} sent to user {user_id}.")
                 sent_count += 1
                 

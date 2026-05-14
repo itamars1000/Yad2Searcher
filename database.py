@@ -7,7 +7,16 @@ from config import DB_FILE, USERS_FILE, logger
 def init_db():
     conn = sqlite3.connect(DB_FILE, timeout=10.0)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE IF NOT EXISTS notifications (ad_id TEXT, user_id TEXT, PRIMARY KEY (ad_id, user_id))")
+    # WAL allows concurrent reads with a single writer — critical since bot,
+    # Yad2 scraper, and Facebook scraper all hit this DB from separate threads
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("CREATE TABLE IF NOT EXISTS notifications (ad_id TEXT, user_id TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (ad_id, user_id))")
+    # Add created_at to legacy notifications rows (migration)
+    try:
+        cursor.execute("ALTER TABLE notifications ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
@@ -93,6 +102,30 @@ def mark_ad_notified(ad_id, user_id):
     except sqlite3.IntegrityError:
         pass
     conn.close()
+
+
+def mark_if_new(ad_id, user_id):
+    """Atomically marks an ad as notified. Returns True if this was the first time."""
+    conn = sqlite3.connect(DB_FILE, timeout=10.0)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO notifications (ad_id, user_id) VALUES (?, ?)", (ad_id, str(user_id)))
+    is_new = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return is_new
+
+
+def cleanup_old_notifications(days=60):
+    """Delete notification records older than `days` to prevent unbounded DB growth."""
+    conn = sqlite3.connect(DB_FILE, timeout=10.0)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM notifications WHERE created_at < datetime('now', ?)", (f'-{int(days)} days',))
+    removed = cursor.rowcount
+    conn.commit()
+    conn.close()
+    if removed:
+        logger.info(f"Cleaned up {removed} notification records older than {days} days.")
+    return removed
 
 # --- User Management (SQLite) ---
 def load_users():
@@ -196,10 +229,10 @@ def remove_saved_apartment(user_id, ad_id):
 def get_saved_apartments(user_id):
     conn = sqlite3.connect(DB_FILE, timeout=10.0)
     cursor = conn.cursor()
-    cursor.execute("SELECT ad_id, title, price, url FROM saved_apartments WHERE user_id = ? ORDER BY timestamp DESC", (str(user_id),))
+    cursor.execute("SELECT ad_id, title, price, url, timestamp FROM saved_apartments WHERE user_id = ? ORDER BY timestamp DESC", (str(user_id),))
     rows = cursor.fetchall()
     conn.close()
-    return [{"ad_id": row[0], "title": row[1], "price": row[2], "url": row[3]} for row in rows]
+    return [{"ad_id": row[0], "title": row[1], "price": row[2], "url": row[3], "timestamp": row[4]} for row in rows]
 
 def is_apartment_saved(user_id, ad_id):
     conn = sqlite3.connect(DB_FILE, timeout=10.0)

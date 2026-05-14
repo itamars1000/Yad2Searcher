@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
 from config import bot, MIN_SLEEP, MAX_SLEEP, MASTER_SCRAPE_URL, logger
-from database import load_users, is_ad_notified, mark_ad_notified
+from database import load_users, is_ad_notified, mark_if_new
 from utils import parse_hebrew_date, contains_blocked_keywords, satisfies_neighborhood_filter
 
 # --- Helpers ---
@@ -294,6 +294,10 @@ def scrape_cycle():
                 f"\u200F🛏️ {ad['rooms']}\n"
                 f"\u200F🔗 [לצפייה במודעה]({ad['full_link']})"
             )
+            # Atomic claim before sending: prevents double-send under concurrent scrapers
+            if not mark_if_new(ad['ad_id'], user_id):
+                user_skipped_dedup += 1
+                continue
             try:
                 markup = types.InlineKeyboardMarkup()
                 btn_save = types.InlineKeyboardButton(
@@ -302,7 +306,6 @@ def scrape_cycle():
                 )
                 markup.add(btn_save)
                 bot.send_message(user_id, msg, parse_mode="Markdown", disable_web_page_preview=True, reply_markup=markup)
-                mark_ad_notified(ad['ad_id'], user_id)
                 user_sent += 1
                 total_sent += 1
             except Exception as e:
@@ -317,8 +320,22 @@ def scrape_cycle():
     logger.info(f"[Smart Batch] Cycle complete. Total alerts sent: {total_sent}")
 
 
+def _sleep_until_morning():
+    """Sleep until 07:00 Israel time."""
+    now = datetime.now()
+    wake = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    if now >= wake:
+        wake = wake.replace(day=wake.day + 1)
+    seconds = (wake - now).total_seconds()
+    logger.info(f"Yad2 night mode: sleeping {int(seconds // 3600)}h {int((seconds % 3600) // 60)}m until 07:00.")
+    time.sleep(seconds)
+
+
 def run_scraper():
     while True:
+        if 0 <= datetime.now().hour < 7:
+            _sleep_until_morning()
+
         try:
             scrape_cycle()
         except Exception as e:

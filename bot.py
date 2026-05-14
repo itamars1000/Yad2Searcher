@@ -10,7 +10,7 @@ from utils import construct_url, get_cities_markup, get_price_markup, get_rooms_
 
 # --- Telegram Bot Handlers ---
 
-@bot.message_handler(commands=['start', 'help'])
+@bot.message_handler(commands=['start'])
 def send_welcome(message):
     """Entry point: register new users, show welcome to existing ones."""
     chat_id = message.chat.id
@@ -29,6 +29,30 @@ def send_welcome(message):
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("🎯 בחירת מסננים", callback_data="start_setup"))
     bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="Markdown")
+
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    """Show full command list, FAQ and usage tips."""
+    help_text = (
+        "‏📖 *מדריך הבוט*\n\n"
+        "‏*פקודות זמינות:*\n"
+        "‏• /start — הצטרפות / חזרה למסך פתיחה\n"
+        "‏• /menu — לוח בקרה אישי עם סטטוס נוכחי\n"
+        "‏• /status — אותו דבר כמו /menu\n"
+        "‏• /help — מסך עזרה זה\n"
+        "‏• /delete — מחיקת חשבון לצמיתות\n\n"
+        "‏*איך זה עובד?*\n"
+        "‏• מגדירים מסננים פעם אחת (עיר, מחיר, חדרים, שכונות, מילים חסומות)\n"
+        "‏• הבוט סורק את יד2 וקבוצות פייסבוק כל ~30 דקות\n"
+        "‏• כשנמצאת דירה תואמת — מקבלים התראה מיידית\n\n"
+        "‏*שאלות נפוצות:*\n"
+        "‏• *מה זה '?' בלוח הבקרה?* — לא מוגדר ערך לאותו מסנן. שלח /menu → ערוך מסננים\n"
+        "‏• *למה אני לא מקבל התראות?* — בדוק שהבוט מופעל (▶️) ושטווח המחיר/חדרים לא צר מדי\n"
+        "‏• *הבוט ישן בלילה* — בין 00:00 ל-07:00 הסריקות מושהות"
+    )
+    bot.send_message(message.chat.id, help_text, parse_mode="Markdown")
+
 
 # --- Delete Account ---
 
@@ -572,21 +596,40 @@ def handle_setup_callbacks(call):
 
 
 # -------- TEXT EDIT PROCESSORS (For targeted edits if they still want text) --------
+def _parse_range(text, conv):
+    """Parse 'min-max' string. Returns (min, max, swapped). Raises ValueError on bad input."""
+    parts = text.split('-')
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise ValueError("צריך שני מספרים מופרדים ב-`-`")
+    a = conv(parts[0].strip())
+    b = conv(parts[1].strip())
+    swapped = a > b
+    if swapped:
+        a, b = b, a
+    return a, b, swapped
+
+
 def process_price_update(message):
     chat_id = message.chat.id
     try:
-        parts = message.text.split('-')
-        min_p = int(parts[0].strip())
-        max_p = int(parts[1].strip())
-        if min_p > max_p:
-            min_p, max_p = max_p, min_p
+        min_p, max_p, swapped = _parse_range(message.text, int)
+    except ValueError as e:
+        msg = bot.send_message(chat_id, f"‏⚠️ פורמט לא תקין ({e}). לדוגמה: `4000-6000`. /menu לביטול.", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_price_update)
+        return
+    except Exception:
+        msg = bot.send_message(chat_id, "‏⚠️ פורמט לא תקין. שני מספרים שלמים מופרדים ב-`-` (לדוגמה: `4000-6000`). /menu לביטול.", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_price_update)
+        return
+
+    try:
             
         user_data[chat_id] = user_data.get(chat_id, {})
         user_data[chat_id]['min_price'] = min_p
         user_data[chat_id]['max_price'] = max_p
         _rebuild_user_url(chat_id)
         
-        bot.send_message(chat_id, f"\u200F✅ טווח מחירים עודכן חופשית: {min_p}-{max_p} ₪", parse_mode="Markdown")
+        bot.send_message(chat_id, f"\u200F✅ טווח מחירים עודכן: {min_p}-{max_p} ₪" + (' (החלפתי בין מינימום למקסימום)' if swapped else ''), parse_mode="Markdown")
         send_dashboard(chat_id)
     except:
         msg = bot.send_message(chat_id, "\u200F⚠️ פורמט לא תקין. נסה שוב (לדוגמה: 4000-6000), או שלח /menu לביטול.")
@@ -595,18 +638,25 @@ def process_price_update(message):
 def process_rooms_update(message):
     chat_id = message.chat.id
     try:
-        parts = message.text.split('-')
-        min_r = float(parts[0].strip())
-        max_r = float(parts[1].strip())
-        if min_r > max_r:
-            min_r, max_r = max_r, min_r
+        min_r, max_r, swapped = _parse_range(message.text, float)
+    except Exception:
+        msg = bot.send_message(chat_id, "‏⚠️ פורמט לא תקין. שני מספרים (יכול עשרוני) מופרדים ב-`-` (לדוגמה: `2.5-3.5`). /menu לביטול.", parse_mode="Markdown")
+        bot.register_next_step_handler(msg, process_rooms_update)
+        return
+
+    try:
+        # noop placeholder so the legacy block below still runs
+        pass
+        if False:
+            min_r, max_r = 0.0, 0.0
+            swapped = False
             
         user_data[chat_id] = user_data.get(chat_id, {})
         user_data[chat_id]['min_rooms'] = min_r
         user_data[chat_id]['max_rooms'] = max_r
         _rebuild_user_url(chat_id)
         
-        bot.send_message(chat_id, f"\u200F✅ טווח חדרים עודכן חופשית: {min_r}-{max_r}", parse_mode="Markdown")
+        bot.send_message(chat_id, f"\u200F✅ טווח חדרים עודכן: {min_r}-{max_r}" + (' (החלפתי בין מינימום למקסימום)' if swapped else ''), parse_mode="Markdown")
         send_dashboard(chat_id)
     except:
         msg = bot.send_message(chat_id, "\u200F⚠️ פורמט לא תקין. נסה שוב (לדוגמה: 2.5-3.5), או שלח /menu לביטול.")
