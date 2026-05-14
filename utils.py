@@ -65,6 +65,81 @@ def parse_hebrew_date(date_text):
     return None
 
 
+def parse_facebook_posts_batch(texts):
+    """Extracts rooms, price, and is_for_rent from multiple posts in a single Gemini call."""
+    from config import logger, GEMINI_API_KEY
+    from google import genai
+    from google.genai import types
+    import json
+    import time
+
+    if not texts:
+        return []
+
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not configured. Cannot parse Facebook posts.")
+        return [{'rooms': None, 'price': None}] * len(texts)
+
+    numbered = "\n\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+    prompt = f"""You are an expert Israeli real estate data extractor. Extract data from each numbered Facebook post below.
+Return ONLY a valid JSON array with exactly {len(texts)} objects, one per post, in the same order.
+Each object must have EXACTLY three keys: "price", "rooms", "is_for_rent".
+
+Rules:
+- "is_for_rent": boolean. false ONLY if the author is SEEKING an apartment (מחפש/ת, מחפשים דירה/שותפים). true if offering/subletting.
+- "rooms" must be a number (e.g. 3, 2.5). Studio = 1. null if missing.
+- "price" must be a number in NIS (e.g. 5000). Convert '5K' → 5000, '5 וחצי אלף' → 5500. null if missing.
+
+Posts:
+{numbered}"""
+
+    for attempt in range(7):
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model='gemini-2.5-flash-lite',
+                contents=prompt,
+                config=types.GenerateContentConfig(response_mime_type="application/json"),
+            )
+            results = json.loads(response.text)
+            if not isinstance(results, list) or len(results) != len(texts):
+                logger.error(f"Gemini batch returned unexpected format (expected {len(texts)} items): {response.text[:300]}")
+                return [{'rooms': None, 'price': None}] * len(texts)
+
+            parsed = []
+            for data in results:
+                if data.get("is_for_rent") is False:
+                    parsed.append({'rooms': None, 'price': None})
+                    continue
+                price = data.get("price")
+                rooms = data.get("rooms")
+                if price is not None:
+                    price = int(price)
+                if rooms is not None:
+                    rooms = float(rooms)
+                parsed.append({'rooms': rooms, 'price': price})
+
+            logger.info(f"Gemini batch: parsed {len(texts)} posts in 1 API call.")
+            return parsed
+
+        except Exception as e:
+            err_str = str(e).lower()
+            if '429' in err_str or 'quota' in err_str or 'exhausted' in err_str:
+                if attempt < 6:
+                    logger.warning(f"Gemini Rate Limit (429). Sleeping 10s... (Attempt {attempt+1}/7)")
+                    time.sleep(10)
+                    continue
+            elif '503' in err_str or 'unavailable' in err_str:
+                if attempt < 6:
+                    logger.warning(f"Gemini 503 Unavailable. Sleeping 5s... (Attempt {attempt+1}/7)")
+                    time.sleep(5)
+                    continue
+            logger.error(f"Gemini batch API failed: {e}")
+            return [{'rooms': None, 'price': None}] * len(texts)
+
+    return [{'rooms': None, 'price': None}] * len(texts)
+
+
 def parse_facebook_post(text):
     """Extracts rooms (float) and price (int) from a free-text Hebrew Facebook post using Google Gemini."""
     from config import logger, GEMINI_API_KEY

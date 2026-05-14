@@ -8,7 +8,7 @@ from telebot import types
 
 from config import bot, APIFY_TOKEN, APIFY_ACTOR_URL, FACEBOOK_GROUPS, FB_MIN_SLEEP, FB_MAX_SLEEP, logger
 from database import load_users, is_ad_notified, mark_ad_notified
-from utils import parse_facebook_post, generate_post_hash, send_apartment_alert, contains_blocked_keywords, satisfies_neighborhood_filter
+from utils import parse_facebook_posts_batch, generate_post_hash, send_apartment_alert, contains_blocked_keywords, satisfies_neighborhood_filter
 
 APIFY_BASE_URL = "https://api.apify.com/v2"
 
@@ -128,34 +128,29 @@ def _scrape_cycle():
     sent_count = 0
     error_count = 0
 
+    # Pass 1: collect posts that have text
+    valid_posts = []
     for post in posts:
         post_text = post.get("text", "")
-
         if not post_text:
             logger.warning(f"Skipping post with missing text. Keys present: {list(post.keys())}")
             no_id_count += 1
             continue
-
-        # Apify may not return a top-level post ID; fall back to a hash of the content
         post_id = str(post.get("postId") or post.get("id") or generate_post_hash(post_text))
-        # Use the direct post URL if available; otherwise fall back to the group URL
         post_url = post.get("url") or post.get("facebookUrl", "")
+        valid_posts.append((post, post_id, post_url, post_text))
 
-        parsed_data = parse_facebook_post(post_text)
-        if not parsed_data:
-            logger.debug(f"Post {post_id}: could not extract price/rooms. Skipping.")
-            if "חדרים" in post_text or "שכירות" in post_text or "דירה" in post_text:
-                logger.warning(f"MISSED APARTMENT? Raw text: {post_text}")
-            no_parse_count += 1
-            continue
+    # Single Gemini call for all valid posts
+    batch_results = parse_facebook_posts_batch([p[3] for p in valid_posts]) if valid_posts else []
 
+    # Pass 2: process each post with its parsed result
+    for (post, post_id, post_url, post_text), parsed_data in zip(valid_posts, batch_results):
         post_rooms = parsed_data["rooms"]
         post_price = parsed_data["price"]
 
         if post_rooms is None or post_price is None:
-            logger.debug(f"Post {post_id}: missing rooms or price after parsing. Skipping.")
-            if "חדרים" in post_text or "שכירות" in post_text or "דירה" in post_text:
-                logger.debug(f"DEBUG PARSE RESULT: {parsed_data}")
+            apartment_keywords = ("חדרים", "שכירות", "דירה", "להשכרה")
+            if any(kw in post_text for kw in apartment_keywords):
                 logger.warning(f"MISSED APARTMENT? Raw text: {post_text}")
             no_parse_count += 1
             continue
