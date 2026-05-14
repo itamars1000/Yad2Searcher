@@ -132,7 +132,7 @@ def _scrape_cycle():
         post_text = post.get("text", "")
 
         if not post_text:
-            logger.debug("Skipping post with missing text.")
+            logger.warning(f"Skipping post with missing text. Keys present: {list(post.keys())}")
             no_id_count += 1
             continue
 
