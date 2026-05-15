@@ -89,3 +89,33 @@ print(f"User Neighborhoods: {nb_list7}")
 is_match7 = satisfies_neighborhood_filter(text9, nb_list7)
 print(f"Satisfies filter? {is_match7} (Expected: True — 'לפלורנטין' in text matches 'פלורנטין' filter)")
 
+print("\n\n======== TESTING 'NO NEIGHBORHOOD MENTIONED' PASS-THROUGH ========")
+
+# No neighborhood mentioned at all — should PASS even though filter is set
+text10 = "דירת 3 חדרים משופצת להשכרה, קומה 2, מעלית, כניסה מיידית. 6500 ש\"ח."
+nb_list8 = "פלורנטין, נווה צדק"
+print(f"Text: {text10}")
+print(f"User Neighborhoods: {nb_list8}")
+m = satisfies_neighborhood_filter(text10, nb_list8)
+print(f"Satisfies filter? {m} (Expected: True — no neighborhood named, benefit of the doubt)")
+
+print("\n-------------------------------------------")
+
+# A DIFFERENT known neighborhood mentioned — should be REJECTED
+text11 = "דירה יפה ברמת אביב ג', 3 חדרים, 6500 ש\"ח."
+nb_list9 = "פלורנטין, נווה צדק"
+print(f"Text: {text11}")
+print(f"User Neighborhoods: {nb_list9}")
+m = satisfies_neighborhood_filter(text11, nb_list9)
+print(f"Satisfies filter? {m} (Expected: False — 'רמת אביב' is a known neighborhood not in user's list)")
+
+print("\n-------------------------------------------")
+
+# User's neighborhood mentioned — should PASS (unchanged behavior)
+text12 = "דירה בנווה צדק, 4 חדרים, 7000 ש\"ח."
+nb_list10 = "פלורנטין, נווה צדק"
+print(f"Text: {text12}")
+print(f"User Neighborhoods: {nb_list10}")
+m = satisfies_neighborhood_filter(text12, nb_list10)
+print(f"Satisfies filter? {m} (Expected: True — 'נווה צדק' is in user's list)")
+

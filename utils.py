@@ -413,12 +413,43 @@ def _normalize_hebrew(text):
     """Return text with one leading prefix stripped from every word."""
     return " ".join(_strip_hebrew_prefix(w) for w in text.split())
 
+# Master list of Tel Aviv-area neighborhoods, used to decide whether a post
+# explicitly names *some* neighborhood at all (so we can pass posts that name none).
+KNOWN_NEIGHBORHOODS = [
+    "פלורנטין", "נווה צדק", "כרם התימנים", "לב העיר", "לב תל אביב",
+    "הצפון הישן", "הצפון החדש", "הצפון הצמרת", "צמרת", "בבלי",
+    "רמת אביב", "רמת אביב ג", "רמת החייל", "תל ברוך", "אפקה",
+    "נווה אביבים", "הדר יוסף", "ביצרון", "יד אליהו", "התקווה",
+    "שכונת התקווה", "נווה שאנן", "שפירא", "נחלת יצחק", "מונטיפיורי",
+    "קרית שלום", "כפר שלם", "רמת ישראל", "גבעת הרצל", "שיכון דן",
+    "מעוז אביב", "רביבים", "כוכב הצפון", "אזורי חן", "הגוש הגדול",
+    "נחלת בנימין", "צהלה", "נאות אפקה", "כיכר המדינה", "נווה גן",
+    "עג'מי", "יפו העתיקה", "יפו", "נמל תל אביב", "שדרות רוטשילד",
+    "שוק הכרמל", "שיינקין", "בזל", "מתחם בזל", "הקריה", "סרונה",
+    "מונטיפיורי", "נווה שרת", "תל כביר", "עזרא", "ערבי נחל",
+]
+
+
+def _text_mentions_any_neighborhood(clean_text, normalized_text):
+    """True if the text explicitly names any neighborhood from the master list."""
+    for nb in KNOWN_NEIGHBORHOODS:
+        nb_l = nb.lower()
+        if nb_l in clean_text:
+            return True
+        if _normalize_hebrew(nb_l) in normalized_text:
+            return True
+    return False
+
+
 def satisfies_neighborhood_filter(text, neighborhoods_str):
     """
     Returns True if neighborhoods_str is empty.
-    Else returns True if at least one selected neighborhood appears in the text,
-    using smart Hebrew prefix stripping (ב/ל/מ/ו/כ/ש/ה and two-letter combos)
-    on both the filter names and the text words.
+    Otherwise:
+      - True if at least one of the user's neighborhoods appears in the text
+      - True if the text does NOT explicitly name any known neighborhood
+        (benefit of the doubt — many real listings omit the neighborhood)
+      - False only if the text names some OTHER neighborhood not in the user's list
+    Uses smart Hebrew prefix stripping (ב/ל/מ/ו/כ/ש/ה and two-letter combos).
     """
     if not neighborhoods_str:
         return True
@@ -439,5 +470,9 @@ def satisfies_neighborhood_filter(text, neighborhoods_str):
         if nb_normalized in normalized_text:
             return True
 
-    return False
+    # No user neighborhood matched. Pass it through ONLY if the text doesn't
+    # explicitly name some other (known) neighborhood.
+    if _text_mentions_any_neighborhood(clean_text, normalized_text):
+        return False
+    return True
 
