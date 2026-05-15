@@ -6,9 +6,10 @@ WORKDIR /app
 # Setting ENV TZ alone is not enough — tzdata must be installed and
 # /etc/localtime must point at the zone.
 ENV TZ=Asia/Jerusalem
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
-    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+ENV DEBIAN_FRONTEND=noninteractive
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo $TZ > /etc/timezone \
+    && apt-get update && apt-get install -y --no-install-recommends tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
