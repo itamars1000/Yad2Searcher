@@ -257,6 +257,13 @@ def scrape_cycle():
         user_skipped_nb = 0
         user_skipped_dedup = 0
 
+        # Diagnostic: surface the parsed filter range so we can spot misconfigured/reversed ranges
+        _dp = _parse_user_price_rooms(user_url)
+        logger.info(
+            f"User {user_id} filters parsed → price [{_dp[0]}-{_dp[1]}] rooms [{_dp[2]}-{_dp[3]}] | "
+            f"sample ad prices: {[a.get('price_numeric') for a in ads[:5]]}"
+        )
+
         for ad in ads:
             # Dedup check (early, cheap)
             if is_ad_notified(ad['ad_id'], user_id):
