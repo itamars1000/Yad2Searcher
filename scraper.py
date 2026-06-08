@@ -112,13 +112,19 @@ def _scrape_all_items(browser):
                     raise
 
         # Wait for page to fully load (instead of fixed sleep)
+        # Wait for items to actually render in the DOM
+        try:
+            page.wait_for_selector("li[data-nagish='feed-item-list-box']", timeout=15000)
+        except Exception:
+            pass
+
         try:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass  # Timeout is fine — page is likely loaded enough
 
         page.mouse.wheel(0, 1000)
-        time.sleep(1)  # Brief pause for lazy-loaded items to render
+        time.sleep(2)  # Brief pause for lazy-loaded items to render
 
         items = page.locator("li[data-nagish='feed-item-list-box']").all()
         if not items:
