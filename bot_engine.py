@@ -55,8 +55,15 @@ if __name__ == "__main__":
     logger.info("🤖 Bot engine started. Press Ctrl+C to stop.")
 
     # Keep main thread alive
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        logger.info("Stopping...")
+    import signal
+    import sys
+    
+    def signal_handler(sig, frame):
+        logger.info("Stopping gracefully...")
+        sys.exit(0)
+        
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    while True:
+        time.sleep(1)
