@@ -146,28 +146,7 @@ def _scrape_all_items(browser):
                 if not ad_id:
                     continue
 
-                # --- Date from image URL (Yad2 embeds upload date: /Pic/YYYY/MM/DD/) ---
-                parsed_date = None
-                img_els = item.locator("img").all()
-                for img in img_els:
-                    src = img.get_attribute("src") or ""
-                    img_match = re.search(r"/Pic/(\d{4})(\d{2})/(\d{2})/", src)
-                    if img_match:
-                        try:
-                            parsed_date = datetime(
-                                int(img_match.group(1)),
-                                int(img_match.group(2)),
-                                int(img_match.group(3))
-                            ).date()
-                            break
-                        except ValueError:
-                            pass
 
-                today = datetime.now().date()
-                if parsed_date and (today - parsed_date).days > 3:
-                    logger.debug(f"Item {i} ({ad_id}): Too old ({parsed_date}). Skipping.")
-                    continue
-                # If no date found, keep it (feed is newest-first, so it's likely recent)
 
                 # --- Fields (using classes seen in DOM inspection) ---
                 # Price: class contains 'feed-item-price_price'
