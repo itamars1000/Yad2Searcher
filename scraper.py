@@ -130,6 +130,14 @@ def _scrape_all_items(browser):
         if not items:
             items = page.locator(".feed-item").all()
 
+        if len(items) == 0:
+            logger.warning(f"[Smart Batch] Page title: {page.title()}")
+            try:
+                body_text = page.locator("body").inner_text()
+                logger.warning(f"[Smart Batch] Body text snippet: {body_text[:500]}")
+            except Exception as e:
+                logger.warning(f"Could not extract body text: {e}")
+
         logger.info(f"[Smart Batch] Found {len(items)} items in feed.")
 
         for i, item in enumerate(items[:20]):
