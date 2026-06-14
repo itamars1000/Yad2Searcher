@@ -27,12 +27,18 @@ from utils import parse_hebrew_date, contains_blocked_keywords, satisfies_neighb
 # Reuse one browser profile across cycles so the PerimeterX cookie (_px3) persists and
 # we don't face a fresh challenge on every single scrape.
 USER_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pw_profile")
-# Headless Chromium is easy to fingerprint. On the server set HEADFUL=1 and run under
-# xvfb (see Dockerfile) for a far less detectable headful browser.
+# Headless Chromium is easy to fingerprint. Set HEADFUL=1 only with a real display
+# (xvfb-run was unreliable in the base image — see Dockerfile); default is headless.
 HEADFUL = os.getenv("HEADFUL", "0") == "1"
 # Optional: use real Chrome ("chrome") instead of bundled Chromium for a stronger
 # fingerprint. Requires Chrome installed in the image; unset = bundled Chromium.
 BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "").strip()
+# Residential proxy — the durable fix for Yad2's datacenter-IP block. Leave
+# PROXY_SERVER empty to scrape directly. Format: PROXY_SERVER="http://host:port"
+# (or socks5://...), with credentials in PROXY_USERNAME / PROXY_PASSWORD.
+PROXY_SERVER = os.getenv("PROXY_SERVER", "").strip()
+PROXY_USERNAME = os.getenv("PROXY_USERNAME", "").strip()
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD", "").strip()
 
 # --- Helpers ---
 def extract_ad_id(link):
@@ -117,6 +123,13 @@ def _launch_context(p):
     }
     if BROWSER_CHANNEL:
         kwargs["channel"] = BROWSER_CHANNEL
+    if PROXY_SERVER:
+        proxy = {"server": PROXY_SERVER}
+        if PROXY_USERNAME:
+            proxy["username"] = PROXY_USERNAME
+            proxy["password"] = PROXY_PASSWORD
+        kwargs["proxy"] = proxy
+        logger.info(f"[Yad2] Routing through proxy {PROXY_SERVER}")
     return p.chromium.launch_persistent_context(USER_DATA_DIR, **kwargs)
 
 
