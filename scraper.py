@@ -1,15 +1,38 @@
 import re
+import os
 import time
 import random
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 from telebot import types
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+
+# Prefer patchright (a patched, stealthier drop-in for Playwright) when installed;
+# fall back to vanilla Playwright + playwright-stealth so nothing breaks if it's absent.
+try:
+    from patchright.sync_api import sync_playwright
+    _USING_PATCHRIGHT = True
+except ImportError:
+    from playwright.sync_api import sync_playwright
+    _USING_PATCHRIGHT = False
+
+try:
+    from playwright_stealth import Stealth
+except ImportError:
+    Stealth = None
 
 from config import bot, MIN_SLEEP, MAX_SLEEP, MASTER_SCRAPE_URL, logger
 from database import load_users, is_ad_notified, mark_if_new
 from utils import parse_hebrew_date, contains_blocked_keywords, satisfies_neighborhood_filter
+
+# Reuse one browser profile across cycles so the PerimeterX cookie (_px3) persists and
+# we don't face a fresh challenge on every single scrape.
+USER_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pw_profile")
+# Headless Chromium is easy to fingerprint. On the server set HEADFUL=1 and run under
+# xvfb (see Dockerfile) for a far less detectable headful browser.
+HEADFUL = os.getenv("HEADFUL", "0") == "1"
+# Optional: use real Chrome ("chrome") instead of bundled Chromium for a stronger
+# fingerprint. Requires Chrome installed in the image; unset = bundled Chromium.
+BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", "").strip()
 
 # --- Helpers ---
 def extract_ad_id(link):
@@ -83,19 +106,61 @@ def _ad_matches_user(ad, user_id, user_data):
     return True
 
 
-def _scrape_all_items(browser):
+def _launch_context(p):
+    """Launch a persistent browser context — cookies/profile survive between cycles."""
+    kwargs = {
+        "headless": not HEADFUL,
+        # No hardcoded user_agent: let the real browser UA show so it can't mismatch
+        # the navigator fingerprint (a classic bot tell).
+        "viewport": {"width": random.randint(1800, 1920), "height": random.randint(900, 1080)},
+        "locale": "he-IL",
+    }
+    if BROWSER_CHANNEL:
+        kwargs["channel"] = BROWSER_CHANNEL
+    return p.chromium.launch_persistent_context(USER_DATA_DIR, **kwargs)
+
+
+def _handle_press_and_hold(page):
+    """
+    Best-effort PerimeterX 'press & hold' solver. PX renders the challenge in a
+    container (commonly #px-captcha); we hold the mouse over it for several seconds.
+    Heuristic and harmless when no challenge is present — PX changes often, so this
+    won't always work, but it's free to try.
+    """
+    try:
+        captcha = page.locator("#px-captcha")
+        if captcha.count() == 0:
+            return False
+        box = captcha.bounding_box()
+        if not box:
+            return False
+        cx = box["x"] + box["width"] / 2
+        cy = box["y"] + box["height"] / 2
+        logger.warning("[Yad2] PerimeterX challenge detected — attempting press & hold.")
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        time.sleep(random.uniform(6, 9))
+        page.mouse.up()
+        try:
+            page.wait_for_selector("li[data-nagish='feed-item-list-box']", timeout=15000)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        logger.warning(f"[Yad2] press-and-hold attempt failed: {e}")
+        return False
+
+
+def _scrape_all_items(context):
     """
     Opens the MASTER_SCRAPE_URL once and returns a list of ad dicts.
     All heavy DOM extraction happens here.
     """
-    context = browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        viewport={"width": random.randint(1800, 1920), "height": random.randint(900, 1080)},
-        locale="he-IL"
-    )
     page = context.new_page()
-    stealth = Stealth()
-    stealth.apply_stealth_sync(page)
+    # Only stack playwright-stealth on the vanilla path; patchright already patches at
+    # a lower level and layering stealth on top of it can break it.
+    if not _USING_PATCHRIGHT and Stealth is not None:
+        Stealth().apply_stealth_sync(page)
 
     ads = []
     try:
@@ -110,6 +175,9 @@ def _scrape_all_items(browser):
                     time.sleep(10)
                 else:
                     raise
+
+        # If PerimeterX is blocking with a press-and-hold challenge, try to clear it.
+        _handle_press_and_hold(page)
 
         # Wait for page to fully load (instead of fixed sleep)
         # Wait for items to actually render in the DOM
@@ -207,7 +275,10 @@ def _scrape_all_items(browser):
     except Exception as e:
         logger.error(f"Error during master scrape: {e}")
     finally:
-        context.close()
+        try:
+            page.close()
+        except Exception:
+            pass
 
     return ads
 
@@ -228,9 +299,11 @@ def scrape_cycle():
     logger.info(f"[Smart Batch] 1 scrape for {len(active_users)} active user(s).")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        ads = _scrape_all_items(browser)
-        browser.close()
+        context = _launch_context(p)
+        try:
+            ads = _scrape_all_items(context)
+        finally:
+            context.close()
 
     logger.info(f"[Smart Batch] Scraped {len(ads)} valid candidate ads.")
 

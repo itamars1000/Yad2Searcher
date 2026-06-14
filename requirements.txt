@@ -1,4 +1,5 @@
 playwright==1.60.0
+patchright
 pyTelegramBotAPI
 schedule
 requests
