@@ -41,7 +41,7 @@ Secrets come from a `.env` file (git-ignored) loaded by `config.py`. **Importing
 
 Non-secret knobs are constants in `config.py`: `ENABLE_FACEBOOK_SCRAPER`, scrape intervals (`MIN_SLEEP`/`MAX_SLEEP`, `FB_MIN_SLEEP`/`FB_MAX_SLEEP`), `MASTER_SCRAPE_URL`, `CITIES`, `FACEBOOK_GROUPS`. The Docker image pins `TZ=Asia/Jerusalem`; scraper "night mode" and Hebrew date parsing assume Israel local time, so timezone matters.
 
-Two extra env vars tune the Yad2 browser (read in `scraper.py`): `HEADFUL=1` runs the browser headful (the Dockerfile sets this and wraps the process in `xvfb-run`), and `BROWSER_CHANNEL=chrome` uses real Chrome instead of bundled Chromium (only if Chrome is installed in the image).
+Two extra env vars tune the Yad2 browser (read in `scraper.py`): `HEADFUL=1` runs the browser headful, and `BROWSER_CHANNEL=chrome` uses real Chrome instead of bundled Chromium (only if Chrome is installed). Docker runs **headless** by default — headful via `xvfb-run` hung in the Playwright base image (xvfb-run brought up Xvfb but never launched Python, so the bot silently never started). Only revisit headful with a custom entrypoint that starts Xvfb explicitly, not `xvfb-run`.
 
 ## Architecture
 
@@ -60,7 +60,7 @@ Do **not** scrape once per user. Each cycle does **one** Yad2 scrape against `MA
 
 ### Yad2 anti-bot (PerimeterX)
 
-Yad2 is behind PerimeterX, and the bot runs from a datacenter IP, so blocking is the standing risk (symptom: `Found 0 items` in `bot.log`, plus a captured page-title/body snippet showing the challenge). The Yad2 scraper mitigates this for free: `patchright` (stealth-patched Chromium) instead of vanilla headless, a **persistent context** (`.pw_profile/`) so the PerimeterX `_px3` cookie survives between cycles, no hardcoded User-Agent (avoids UA↔fingerprint mismatch), headful-under-xvfb in Docker, and a best-effort `_handle_press_and_hold()` for the "press & hold" challenge. None of this beats the datacenter IP with certainty — the durable fix is a residential proxy (pass `proxy=` to `launch_persistent_context` in `_launch_context`). Don't re-add a static `user_agent` or switch back to a fresh `new_context` per cycle; both regress the stealth.
+Yad2 is behind PerimeterX, and the bot runs from a datacenter IP, so blocking is the standing risk (symptom: `Found 0 items` in `bot.log`, plus a captured page-title/body snippet showing the challenge). The Yad2 scraper mitigates this for free: `patchright` (stealth-patched Chromium) instead of vanilla headless, a **persistent context** (`.pw_profile/`) so the PerimeterX `_px3` cookie survives between cycles, no hardcoded User-Agent (avoids UA↔fingerprint mismatch), and a best-effort `_handle_press_and_hold()` for the "press & hold" challenge. (Runs headless in Docker — headful via `xvfb-run` was unreliable in this base image.) None of this beats the datacenter IP with certainty — the durable fix is a residential proxy (pass `proxy=` to `launch_persistent_context` in `_launch_context`). Don't re-add a static `user_agent` or switch back to a fresh `new_context` per cycle; both regress the stealth.
 
 ### Deduplication & concurrency invariant
 
